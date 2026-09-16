@@ -154,8 +154,21 @@ final class MissionControlOverlay {
         if signature != lastSignature {
             lastSignature = signature
             log("Dock 창 변화: \(signature.isEmpty ? "없음" : signature)")
+            // 상태가 바뀌었으면 인식을 다시 시도할 수 있게 한다
+            if !isShowing {
+                ocrAttempts = 0
+                nextOCRAt = Date().addingTimeInterval(0.35)
+            }
         }
         let open = signature != baselineSignature
+
+        // "열림"인데 인식 시도를 다 써도 라벨이 없으면, Mission Control이 아니라 Dock의 다른 변화(자동 숨김 등)일 가능성이 크다.
+        // 그 상태를 새 평소 상태로 삼아 스스로 복구한다.
+        if open, !isShowing, !ocrInFlight, ocrAttempts >= maxOCRAttempts,
+           let openedAt, Date().timeIntervalSince(openedAt) > 5 {
+            refreshBaseline(reason: "라벨 없이 5초 경과")
+            return
+        }
 
         if !open {
             if wasOpen {
