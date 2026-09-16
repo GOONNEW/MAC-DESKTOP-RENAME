@@ -16,6 +16,8 @@ final class MissionControlSignals {
     private let keyboard = MissionControlTrigger()
     private var mouseMonitor: Any?
     private var lastMouseLocation: NSPoint?
+    /// 한 번의 쓸기에서 제스처가 여러 번 잡히므로, 이 시간 안의 재감지는 같은 동작으로 본다
+    private var lastGestureAt = Date.distantPast
     private var trackpadWorks = false
     private var observers: [NSObjectProtocol] = []
     private var inputMonitors: [Any] = []
@@ -82,6 +84,11 @@ final class MissionControlSignals {
     }
 
     private func open(_ reason: String) {
+        let now = Date()
+        // 같은 쓸기의 반복 감지는 무시
+        if now.timeIntervalSince(lastGestureAt) < 0.8 { return }
+        lastGestureAt = now
+
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         // 이미 보이는 중이라면 같은 제스처는 "닫기"다 (세 손가락으로 열고 세 손가락으로 닫는 경우)
