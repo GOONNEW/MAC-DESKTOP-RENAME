@@ -44,6 +44,9 @@ final class MissionControlOverlay {
     /// Dock이 맨 앞 앱인지 (Mission Control이 열리면 그렇게 된다)
     private var dockWasFront = false
     private var registerNote = ""
+    private var lastServerSignature = ""
+    private var lastStatusNote = ""
+    private var menuBarWasHidden = false
     private var spaceObserver: NSObjectProtocol?
     private var appObserver: NSObjectProtocol?
     private var inputMonitors: [Any] = []
@@ -136,7 +139,7 @@ final class MissionControlOverlay {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.S"
         events.append("\(formatter.string(from: Date())) \(message)")
-        if events.count > 30 { events.removeFirst(events.count - 30) }
+        if events.count > 40 { events.removeFirst(events.count - 40) }
     }
 
     /// 15초 동안 Mission Control이 열리면 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
@@ -157,7 +160,24 @@ final class MissionControlOverlay {
             dockWasFront = dockFront
             log(dockFront ? "Dock이 맨 앞 앱이 됨" : "Dock이 맨 앞에서 벗어남")
         }
-        let open = wsOpen || dockFront
+        // 시스템 창 목록 변화 기록 (메뉴 막대가 사라지는지 확인용)
+        let serverSignature = DockAccessibility.windowServerSignature()
+        if serverSignature != lastServerSignature {
+            lastServerSignature = serverSignature
+            log("시스템 창: \(serverSignature.isEmpty ? "없음" : serverSignature)")
+        }
+        // 우리 메뉴 막대 아이콘 창의 상태 기록
+        let statusNote = Self.statusWindowNote()
+        if statusNote != lastStatusNote {
+            lastStatusNote = statusNote
+            log("메뉴 막대 아이콘 창: \(statusNote)")
+        }
+        let menuBarHidden = !DockAccessibility.isMenuBarVisible() || Self.isStatusWindowOccluded()
+        if menuBarHidden != menuBarWasHidden {
+            menuBarWasHidden = menuBarHidden
+            log(menuBarHidden ? "메뉴 막대 사라짐" : "메뉴 막대 다시 보임")
+        }
+        let open = wsOpen || dockFront || menuBarHidden
 
         if !open {
             if wasOpen {
@@ -193,6 +213,22 @@ final class MissionControlOverlay {
 
         guard !isShowing, !ocrInFlight, ocrAttempts < maxOCRAttempts, Date() >= nextOCRAt else { return }
         startOCR()
+    }
+
+    private static var statusWindow: NSWindow? {
+        NSApp.windows.first { String(describing: type(of: $0)).contains("StatusBar") }
+    }
+
+    private static func statusWindowNote() -> String {
+        guard let window = statusWindow else { return "없음" }
+        let visible = window.occlusionState.contains(.visible)
+        let f = window.frame
+        return "\(visible ? "보임" : "가려짐"), 위치 (\(Int(f.minX)), \(Int(f.minY))) \(Int(f.width))×\(Int(f.height)), isVisible=\(window.isVisible)"
+    }
+
+    private static func isStatusWindowOccluded() -> Bool {
+        guard let window = statusWindow, window.isVisible else { return false }
+        return !window.occlusionState.contains(.visible)
     }
 
     private func startOCR() {
@@ -278,7 +314,9 @@ final class MissionControlOverlay {
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
         lines.append("지금 Dock 창: \(Self.describeDockWindows())")
         lines.append("WindowServer 알림 등록 결과: \(registerNote) (0이면 성공)")
-        lines.append("지금 열림 판정: \((wsOpen || dockWasFront) ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
+        lines.append("지금 시스템 창: \(DockAccessibility.windowServerSignature())")
+        lines.append("지금 메뉴 막대 아이콘 창: \(Self.statusWindowNote())")
+        lines.append("지금 열림 판정: \((wsOpen || dockWasFront || menuBarWasHidden) ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
         if !events.isEmpty {
             lines.append("기록:")
             lines.append(contentsOf: events.map { "  " + $0 })

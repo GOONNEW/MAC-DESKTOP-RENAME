@@ -173,6 +173,33 @@ enum DockAccessibility {
         return dockWindows().contains { $0.frame.width * $0.frame.height >= minArea }
     }
 
+    /// 시스템(Window Server)이 띄운 화면 위 창 목록. Mission Control이 열리면 메뉴 막대(Menubar) 창이 사라진다.
+    static func windowServerWindows() -> [(name: String, frame: CGRect, layer: Int)] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        return list.compactMap { info in
+            guard (info[kCGWindowOwnerName as String] as? String) == "Window Server",
+                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { return nil }
+            let name = info[kCGWindowName as String] as? String ?? ""
+            let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+            return (name, bounds, layer)
+        }
+    }
+
+    static func windowServerSignature() -> String {
+        windowServerWindows()
+            .map { "\($0.name.isEmpty ? "(이름 없음)" : $0.name) \(Int($0.frame.width))×\(Int($0.frame.height))@\(Int($0.frame.minX)),\(Int($0.frame.minY)) L\($0.layer)" }
+            .sorted()
+            .joined(separator: " | ")
+    }
+
+    /// 메뉴 막대 창이 화면에 보이는지
+    static func isMenuBarVisible() -> Bool {
+        windowServerWindows().contains { $0.name == "Menubar" }
+    }
+
     /// Dock 창 목록을 비교 가능한 문자열로 만든다. Mission Control이 열리면 이 값이 평소와 달라진다.
     static func dockWindowSignature() -> String {
         dockWindows()
