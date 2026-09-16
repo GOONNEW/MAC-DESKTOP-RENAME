@@ -72,9 +72,11 @@ final class SpaceManager: ObservableObject {
         if active != activeSpace { activeSpace = active }
     }
 
+    /// macOS 단축키(⌃숫자)를 대신 눌러 전환한다. 전체 화면 공간이나 11번째 이후 데스크탑은 지원하지 않는다.
     func switchTo(_ space: Space) {
-        SkyLight.switchToSpace(space.id, onDisplay: space.displayID)
+        guard let number = space.number, SpaceSwitcher.canSwitch(to: number) else { return }
+        SpaceSwitcher.switchTo(number: number)
         // 전환 알림이 늦게 올 수 있으므로 잠시 후 한 번 더 갱신
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.refresh() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.refresh() }
     }
 }

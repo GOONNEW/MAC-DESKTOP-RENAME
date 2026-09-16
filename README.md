@@ -36,7 +36,8 @@ open build/DesktopNamer.app
 | 파일 | 역할 |
 | --- | --- |
 | `SkyLight.swift` | 비공개 공간 API를 dlsym으로 로드 |
-| `SpaceManager.swift` | 공간 목록/현재 공간 추적, 공간 전환 |
+| `SpaceManager.swift` | 공간 목록/현재 공간 추적 |
+| `SpaceSwitcher.swift` | ⌃숫자 단축키를 대신 눌러 데스크탑 전환 |
 | `NameStore.swift` | UUID → 이름 저장 (UserDefaults) |
 | `StatusBarController.swift` | 메뉴 막대 항목과 메뉴 |
 | `RenameWindow.swift` | 이름 편집 창 (SwiftUI) |
@@ -46,5 +47,6 @@ open build/DesktopNamer.app
 ## 알려진 제한
 
 - 이름표는 원래 라벨을 "덮는" 것이므로 위치가 어긋나면 `MissionControlOverlay.swift`의 `labelBottomInset` 값을 조정하세요.
-- 메뉴에서 공간 전환은 비공개 API(`CGSManagedDisplaySetCurrentSpace`)를 사용하며, 일부 macOS 버전에서는 전환 애니메이션 없이 바뀌거나 동작하지 않을 수 있습니다.
+- 메뉴에서 데스크탑 전환은 macOS 단축키(⌃1~⌃9, ⌃0)를 대신 눌러 주는 방식입니다. 시스템 설정 > 키보드 > 키보드 단축키 > Mission Control에서 "데스크탑 N으로 전환"이 켜져 있어야 하고, 접근성 권한이 필요합니다. 11번째 이후 데스크탑은 메뉴에서 전환할 수 없습니다.
+- 비공개 API로 공간을 직접 바꾸는 방식(`CGSManagedDisplaySetCurrentSpace`)은 Dock과 상태가 어긋나 창이 다른 데스크탑에 나타나는 문제가 있어 사용하지 않습니다.
 - 전체 화면 앱 공간은 이름을 지정할 수 없습니다(Mission Control이 앱 이름을 표시).

@@ -57,6 +57,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             item.target = self
             item.representedObject = space
             item.state = space.isActive ? .on : .off
+            item.isEnabled = space.number.map(SpaceSwitcher.canSwitch(to:)) ?? false
             item.attributedTitle = Self.attributedTitle(
                 number: space.number,
                 name: names.displayName(for: space),
