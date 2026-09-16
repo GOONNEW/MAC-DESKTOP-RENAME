@@ -51,7 +51,9 @@ final class MissionControlOverlay {
     /// 캡처할 화면 위쪽 비율
     private let captureFraction: CGFloat = 0.3
     /// 이름표가 떠 있을 때 인식하는 띠의 절반 높이(pt)
-    private let bandHalfHeight: CGFloat = 40
+    private let bandHalfHeight: CGFloat = 60
+    /// 캡처 배율 (레티나 2.0 대신 1.5로 낮춰 인식 속도를 높인다)
+    private let captureScale: CGFloat = 1.5
     /// 인식이 놓친 이름표를 유지하는 시간
     private let keepMissingFor: TimeInterval = 0.6
 
@@ -60,6 +62,8 @@ final class MissionControlOverlay {
     private var lastProcessedAt = Date.distantPast
     private var showingForQueue = false
     private var rowMidYForQueue: CGFloat?
+    /// 띠 인식에서 라벨을 놓쳤을 때 다음 프레임은 전체 범위로 확인한다
+    private var verifyFullForQueue = false
 
     private var dismissedAt = Date.distantPast
 
@@ -200,7 +204,7 @@ final class MissionControlOverlay {
 
     /// Mission Control을 여는 동작이 감지되면 몇 초간 화면 감시를 켠다.
     private func wake(reason: String) {
-        watchUntil = Date().addingTimeInterval(5)
+        watchUntil = Date().addingTimeInterval(8)
         if !stream.isRunning && !streamStarting {
             lastTriggerNote = "\(reason) (\(Self.timeString(Date())))"
             log("동작 감지: \(reason) → 감시 시작")
@@ -237,7 +241,7 @@ final class MissionControlOverlay {
             return
         }
         guard let screen = NSScreen.screens.first else { return }
-        let strip = ScreenText.Strip(screen: screen, fraction: captureFraction)
+        let strip = ScreenText.Strip(screen: screen, fraction: captureFraction, scale: captureScale)
         self.strip = strip
         streamStarting = true
         Task { [weak self] in
@@ -271,15 +275,17 @@ final class MissionControlOverlay {
         guard let strip else { return }
         frameCount += 1
         if processing { return }
-        // 이름표가 없을 때는 초당 6회까지만 인식한다
-        let minInterval: TimeInterval = showingForQueue ? 0 : 0.15
+        // 이름표가 없을 때는 초당 20회까지 인식한다 (감시는 잠깐만 켜지므로 부담이 작다)
+        let minInterval: TimeInterval = showingForQueue ? 0 : 0.05
         guard Date().timeIntervalSince(lastProcessedAt) >= minInterval else { return }
         processing = true
         let started = Date()
 
-        // 이름표가 떠 있으면 라벨 줄 주변의 얇은 띠만 인식해 속도를 높인다
+        // 이름표가 떠 있으면 라벨 줄 주변의 얇은 띠만 인식해 속도를 높인다.
+        // 단, 직전 띠 인식에서 라벨을 놓쳤으면 이번엔 전체를 본다 (라벨이 위아래로 이동했을 수 있음).
+        let useBand = showingForQueue && !verifyFullForQueue
         let region: CGRect
-        if showingForQueue, let midY = rowMidYForQueue {
+        if useBand, let midY = rowMidYForQueue {
             region = strip.regionOfInterest(centerY: midY, halfHeight: bandHalfHeight)
         } else {
             region = ScreenText.fullRegion
@@ -289,6 +295,13 @@ final class MissionControlOverlay {
         let duration = Date().timeIntervalSince(started)
         lastProcessedAt = Date()
         processing = false
+
+        if useBand, let result, result.labels.isEmpty {
+            // 띠에서 놓침 → 아직 지우지 않고 다음 프레임을 전체로 확인
+            verifyFullForQueue = true
+            return
+        }
+        if let result, !result.labels.isEmpty { verifyFullForQueue = false }
 
         DispatchQueue.main.async { [weak self] in
             self?.finishOCR(result, startedAt: started, duration: duration)
@@ -406,6 +419,7 @@ final class MissionControlOverlay {
         stream.perform { [weak self] in
             self?.showingForQueue = showing
             self?.rowMidYForQueue = midY
+            self?.verifyFullForQueue = false
         }
     }
 

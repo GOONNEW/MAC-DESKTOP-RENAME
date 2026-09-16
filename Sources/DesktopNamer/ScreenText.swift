@@ -24,6 +24,8 @@ enum ScreenText {
     struct Strip {
         let screen: NSScreen
         let fraction: CGFloat
+        /// 캡처 배율. 2.0이 레티나 원본, 낮추면 인식이 빨라진다.
+        let scale: CGFloat
 
         var heightPoints: CGFloat { (screen.frame.height * fraction).rounded() }
         /// 띠 아래쪽의 AppKit y 좌표
@@ -31,7 +33,7 @@ enum ScreenText {
         /// 디스플레이 기준(왼쪽 위 원점, 포인트) 캡처 영역
         var sourceRect: CGRect { CGRect(x: 0, y: 0, width: screen.frame.width, height: heightPoints) }
         var pixelSize: CGSize {
-            CGSize(width: screen.frame.width * screen.backingScaleFactor, height: heightPoints * screen.backingScaleFactor)
+            CGSize(width: (screen.frame.width * scale).rounded(), height: (heightPoints * scale).rounded())
         }
 
         /// AppKit y 중심 ± halfHeight 범위를 Vision의 관심 영역(정규화, 아래 원점)으로 바꾼다.
