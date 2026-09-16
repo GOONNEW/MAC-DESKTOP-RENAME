@@ -24,6 +24,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         super.init()
 
         menu.delegate = self
+        menu.autoenablesItems = false
         statusItem.menu = menu
         if let button = statusItem.button {
             button.image = Self.makeIcon()

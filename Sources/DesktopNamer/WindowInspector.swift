@@ -29,7 +29,7 @@ enum WindowInspector {
                   let name = info[kCGWindowOwnerName as String] as? String,
                   let windowID = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
                   let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
-                  let bounds = CGRect(dictionaryRepresentation: boundsDict),
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
                   bounds.width >= 100, bounds.height >= 60 else { continue }
             let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
             guard alpha > 0 else { continue }
