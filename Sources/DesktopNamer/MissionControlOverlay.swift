@@ -52,8 +52,12 @@ final class MissionControlOverlay {
     private let captureFraction: CGFloat = 0.3
     /// 이름표가 떠 있을 때 인식하는 띠의 절반 높이(pt)
     private let bandHalfHeight: CGFloat = 60
-    /// 캡처 배율 (레티나 2.0 대신 1.5로 낮춰 인식 속도를 높인다)
-    private let captureScale: CGFloat = 1.5
+    /// 캡처 배율 (레티나 2.0 대신 1.25로 낮춰 인식 속도를 높인다)
+    private let captureScale: CGFloat = 1.25
+    /// 연속 프레임의 평균 밝기 차이가 이보다 크면 화면이 움직이는 중으로 본다 (0~255)
+    private let motionThreshold: Double = 3.0
+    /// 마지막 프레임 뒤 이 시간 동안 새 프레임이 없으면 멈춘 것으로 본다
+    private let settleDelay: TimeInterval = 0.08
     /// 인식이 놓친 이름표를 유지하는 시간
     private let keepMissingFor: TimeInterval = 0.6
 
@@ -61,9 +65,18 @@ final class MissionControlOverlay {
     private var processing = false
     private var lastProcessedAt = Date.distantPast
     private var showingForQueue = false
-    private var rowMidYForQueue: CGFloat?
-    /// 띠 인식에서 라벨을 놓쳤을 때 다음 프레임은 전체 범위로 확인한다
+    /// 라벨 줄이 있던 높이들 (AppKit y). 인식 범위를 이 근처로 좁혀 속도를 높인다.
+    private var knownRowsForQueue: [CGFloat] = []
+    /// 좁힌 범위에서 라벨을 놓쳤을 때 다음 프레임은 전체 범위로 확인한다
     private var verifyFullForQueue = false
+    // 움직임 감지
+    private var previousSample: [UInt8] = []
+    private var latestBuffer: CVPixelBuffer?
+    private var lastFrameAt = Date.distantPast
+    private var inMotion = false
+    private var settleTimer: DispatchSourceTimer?
+    private var lastMotionAt = Date.distantPast
+    private var knownRows: [CGFloat] = []
 
     private var dismissedAt = Date.distantPast
 
@@ -105,6 +118,7 @@ final class MissionControlOverlay {
         makeAnchorWindow()
 
         stream.onFrame = { [weak self] buffer in self?.handleFrame(buffer) }
+        startSettleTimer()
         stream.onStop = { [weak self] error in
             DispatchQueue.main.async {
                 self?.log("스트림 중단: \(error.localizedDescription)")
@@ -153,6 +167,8 @@ final class MissionControlOverlay {
         running = false
         housekeeping?.invalidate()
         housekeeping = nil
+        settleTimer?.cancel()
+        settleTimer = nil
         trigger.stop()
         trackpad.stopMonitoring()
         stream.stop()
@@ -271,24 +287,66 @@ final class MissionControlOverlay {
 
     // MARK: - 프레임 처리 (스트림 큐)
 
+    /// 화면이 움직이다 멈추면(새 프레임이 잠시 안 오면) 마지막 프레임을 인식한다.
+    private func startSettleTimer() {
+        settleTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "DesktopNamer.Settle"))
+        timer.schedule(deadline: .now(), repeating: .milliseconds(40))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.stream.perform { [weak self] in
+                guard let self, self.inMotion, !self.processing,
+                      Date().timeIntervalSince(self.lastFrameAt) > self.settleDelay,
+                      let buffer = self.latestBuffer else { return }
+                self.inMotion = false
+                self.recognize(buffer, reason: "멈춤")
+            }
+        }
+        timer.resume()
+        settleTimer = timer
+    }
+
     private func handleFrame(_ buffer: CVPixelBuffer) {
-        guard let strip else { return }
         frameCount += 1
-        if processing { return }
-        // 이름표가 없을 때는 초당 20회까지 인식한다 (감시는 잠깐만 켜지므로 부담이 작다)
-        let minInterval: TimeInterval = showingForQueue ? 0 : 0.05
-        guard Date().timeIntervalSince(lastProcessedAt) >= minInterval else { return }
+        latestBuffer = buffer
+        lastFrameAt = Date()
+
+        // 연속 프레임 차이로 움직임 판단 (라벨을 인식하기엔 너무 느리므로, 움직일 때는 숨기고 멈추면 한 번에 그린다)
+        let sample = Self.sample(buffer)
+        let difference = Self.difference(sample, previousSample)
+        previousSample = sample
+
+        if difference > motionThreshold {
+            if !inMotion {
+                inMotion = true
+                DispatchQueue.main.async { [weak self] in self?.motionStarted() }
+            }
+            return
+        }
+        if inMotion {
+            // 이번 프레임에서 멈췄다
+            inMotion = false
+            recognize(buffer, reason: "멈춤")
+            return
+        }
+        // 이미 멈춘 상태의 작은 변화 (강조 표시 등): 가끔만 인식
+        guard !processing, Date().timeIntervalSince(lastProcessedAt) >= 0.3 else { return }
+        recognize(buffer, reason: "정지 중 변화")
+    }
+
+    private func recognize(_ buffer: CVPixelBuffer, reason: String) {
+        guard let strip, !processing else { return }
         processing = true
         let started = Date()
 
-        // 이름표가 떠 있으면 라벨 줄 주변의 얇은 띠만 인식해 속도를 높인다.
-        // 단, 직전 띠 인식에서 라벨을 놓쳤으면 이번엔 전체를 본다 (라벨이 위아래로 이동했을 수 있음).
-        let useBand = showingForQueue && !verifyFullForQueue
-        let region: CGRect
-        if useBand, let midY = rowMidYForQueue {
-            region = strip.regionOfInterest(centerY: midY, halfHeight: bandHalfHeight)
-        } else {
-            region = ScreenText.fullRegion
+        // 알고 있는 라벨 줄 높이 근처만 인식해 속도를 높인다. 놓치면 다음번엔 전체를 본다.
+        var region = ScreenText.fullRegion
+        var narrowed = false
+        if !verifyFullForQueue, let minY = knownRowsForQueue.min(), let maxY = knownRowsForQueue.max() {
+            let center = (minY + maxY) / 2
+            let half = (maxY - minY) / 2 + bandHalfHeight
+            region = strip.regionOfInterest(centerY: center, halfHeight: half)
+            narrowed = true
         }
 
         let result = try? ScreenText.recognizeDesktopLabels(in: buffer, strip: strip, regionOfInterest: region)
@@ -296,29 +354,77 @@ final class MissionControlOverlay {
         lastProcessedAt = Date()
         processing = false
 
-        if useBand, let result, result.labels.isEmpty {
-            // 띠에서 놓침 → 아직 지우지 않고 다음 프레임을 전체로 확인
+        if narrowed, let result, result.labels.isEmpty {
+            // 좁힌 범위에서 놓침 → 같은 프레임을 전체 범위로 다시 본다
             verifyFullForQueue = true
+            recognize(buffer, reason: reason + " (전체 재확인)")
             return
         }
         if let result, !result.labels.isEmpty { verifyFullForQueue = false }
 
         DispatchQueue.main.async { [weak self] in
-            self?.finishOCR(result, startedAt: started, duration: duration)
+            self?.finishOCR(result, startedAt: started, duration: duration, reason: reason)
         }
+    }
+
+    /// 프레임의 밝기를 듬성듬성 샘플링한다 (움직임 판단용)
+    private static func sample(_ buffer: CVPixelBuffer) -> [UInt8] {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return [] }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let stepX = max(1, width / 96)
+        let stepY = max(1, height / 36)
+        var out: [UInt8] = []
+        out.reserveCapacity((width / stepX + 1) * (height / stepY + 1))
+        var y = 0
+        while y < height {
+            let row = base.advanced(by: y * bytesPerRow)
+            var x = 0
+            while x < width {
+                out.append(row.load(fromByteOffset: x * 4 + 1, as: UInt8.self)) // BGRA의 G
+                x += stepX
+            }
+            y += stepY
+        }
+        return out
+    }
+
+    private static func difference(_ a: [UInt8], _ b: [UInt8]) -> Double {
+        guard a.count == b.count, !a.isEmpty else { return 255 }
+        var total = 0
+        for index in 0..<a.count {
+            total += abs(Int(a[index]) - Int(b[index]))
+        }
+        return Double(total) / Double(a.count)
     }
 
     // MARK: - 결과 반영 (메인 스레드)
 
-    private func finishOCR(_ result: ScreenText.Result?, startedAt: Date, duration: TimeInterval) {
-        guard startedAt >= dismissedAt else { return } // 제거 직전에 찍은 화면은 무시
+    /// 화면이 움직이기 시작했다: 이름표를 숨긴다 (멈추면 다시 인식해서 그린다)
+    private func motionStarted() {
+        lastMotionAt = Date()
+        guard isShowing else { return }
+        panels.forEach { $0.orderOut(nil) }
+        panels.removeAll()
+        panelLabels = []
+        tracked.removeAll()
+        isShowing = false
+        stream.perform { [weak self] in self?.showingForQueue = false }
+        watchUntil = Date().addingTimeInterval(4)
+    }
+
+    private func finishOCR(_ result: ScreenText.Result?, startedAt: Date, duration: TimeInterval, reason: String) {
+        guard startedAt >= dismissedAt, startedAt >= lastMotionAt else { return } // 제거 직전/움직임 전 화면은 무시
         guard let result else {
             lastOCRNote = "인식 실패"
             return
         }
         ocrRuns += 1
         lastOCRTexts = Array(result.allText.prefix(20))
-        lastOCRNote = "인식 \(ocrRuns)회 (프레임 \(frameCount)개), 마지막: \(Int(duration * 1000))ms, 글자 \(result.allText.count)개, 데스크탑 라벨 \(result.labels.count)개"
+        lastOCRNote = "인식 \(ocrRuns)회 (프레임 \(frameCount)개), 마지막: \(Int(duration * 1000))ms (\(reason)), 글자 \(result.allText.count)개, 데스크탑 라벨 \(result.labels.count)개"
 
         guard !result.labels.isEmpty else {
             if isShowing {
@@ -354,6 +460,7 @@ final class MissionControlOverlay {
             tracked.removeAll()
         }
         rowMidY = midY
+        rememberRow(midY)
 
         var matched = 0
         for (index, found) in sorted.enumerated() {
@@ -415,12 +522,18 @@ final class MissionControlOverlay {
 
     private func setShowing(_ showing: Bool) {
         isShowing = showing
-        let midY = rowMidY
         stream.perform { [weak self] in
             self?.showingForQueue = showing
-            self?.rowMidYForQueue = midY
-            self?.verifyFullForQueue = false
         }
+    }
+
+    /// 라벨 줄이 나타난 높이를 최대 3개까지 기억해 다음 인식 범위를 좁힌다
+    private func rememberRow(_ midY: CGFloat) {
+        if knownRows.contains(where: { abs($0 - midY) < 15 }) { return }
+        knownRows.append(midY)
+        if knownRows.count > 3 { knownRows.removeFirst() }
+        let rows = knownRows
+        stream.perform { [weak self] in self?.knownRowsForQueue = rows }
     }
 
     /// 이름표를 지우고, 닫히는 애니메이션 동안 잠깐 다시 그리지 않는다.
@@ -453,6 +566,7 @@ final class MissionControlOverlay {
         lines.append("오버레이 실행 중: \(running ? "예" : "아니오"), 감시 모드: \(alwaysWatch ? "항상" : "동작 감지 시"), 화면 스트림: \(stream.isRunning ? "동작" : "정지")")
         lines.append("동작 감지: 트랙패드 \(trackpad.note) / 키보드 \(trigger.lastNote), 마지막 감지: \(lastTriggerNote)")
         lines.append("캡처 제외: \(stream.excludedNote)")
+        lines.append("기억한 라벨 줄 높이: \(knownRows.map { String(Int($0)) }.joined(separator: ", "))")
         lines.append("글자 인식: \(lastOCRNote)")
         if !lastOCRTexts.isEmpty {
             lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))
