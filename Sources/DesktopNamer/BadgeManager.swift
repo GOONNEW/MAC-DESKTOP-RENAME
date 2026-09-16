@@ -152,6 +152,10 @@ final class BadgeManager {
             let alpha: CGFloat = visible && hasName(uuid) ? 1 : 0
             panels.forEach { $0.alphaValue = alpha }
         }
+        // 배지는 자기 데스크탑에서만 보이지만, 전환 직후 잔상이 남을 수 있어 현재 것만 앞으로 올린다
+        if visible, let active = spaces.activeSpace, let panels = badges[active.uuid] {
+            panels.forEach { $0.orderFrontRegardless() }
+        }
     }
 
     /// 5초 동안 배지를 보여 준다 (제대로 뜨는지 눈으로 확인용)
@@ -222,8 +226,8 @@ final class BadgeManager {
         panel.hidesOnDeactivate = false
         panel.alphaValue = 0
         panel.isReleasedWhenClosed = false
-        // 창들 위에 떠서 썸네일에서 항상 보이게. 평소엔 투명이라 방해하지 않는다.
-        panel.level = .floating
+        // 배경화면 바로 위, 일반 창 아래층에 둔다. 앱 전환 화면 등에서 창을 가리지 않는다.
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
         // 이 데스크탑에만 속하게 한다. moveToActiveSpace/canJoinAllSpaces가 없어야 따라다니지 않는다.
         panel.collectionBehavior = [.stationary, .ignoresCycle]
         // 앱이 활성화될 때 창을 현재 데스크탑으로 끌어오지 않도록
