@@ -21,6 +21,7 @@ final class MissionControlOverlay {
     private var lastButtons: [DockAccessibility.SpaceButton] = []
     private var lastLabelNote = ""
     private var tickCount = 0
+    private var lastTree = ""
 
     /// 버튼 프레임 바닥에서 라벨 중심까지의 거리. Mission Control의 라벨 위치에 맞춰 조정한다.
     private let labelBottomInset: CGFloat = 12
@@ -61,15 +62,13 @@ final class MissionControlOverlay {
         let scan = DockAccessibility.scan()
         guard let buttons = scan.buttons else {
             // Mission Control이 닫혀 있는 평소 상태. 마지막 감지 기록은 유지한다.
-            if isShowing {
-                hide()
-                lastScanNote = scan.note
-            }
+            if isShowing { hide() }
             return
         }
         lastDetection = Date()
         lastScanNote = scan.note
         lastButtons = buttons
+        if !scan.tree.isEmpty { lastTree = scan.tree }
         show(buttons)
     }
 
@@ -93,6 +92,10 @@ final class MissionControlOverlay {
             }
         }
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
+        if !lastTree.isEmpty {
+            lines.append("Mission Control 내부 구조:")
+            lines.append(lastTree)
+        }
         lines.append("이름 저장 목록: \(names.names.isEmpty ? "없음" : names.names.values.joined(separator: ", "))")
         lines.append("공간 목록: " + spaces.spaces.map { $0.number.map { String($0) } ?? "전체화면" }.joined(separator: ", "))
         lines.append("화면: " + NSScreen.screens.map { "\(Int($0.frame.width))×\(Int($0.frame.height)) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY)))" }.joined(separator: " / "))

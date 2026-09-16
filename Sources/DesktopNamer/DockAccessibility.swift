@@ -69,6 +69,8 @@ enum DockAccessibility {
         let buttons: [SpaceButton]?
         /// 진단용 메모
         let note: String
+        /// 버튼을 못 찾았을 때 mc 그룹 아래 구조 덤프 (진단용)
+        let tree: String
     }
 
     static func spaceButtons() -> [SpaceButton]? {
@@ -77,19 +79,19 @@ enum DockAccessibility {
 
     static func scan() -> Scan {
         guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
-            return Scan(buttons: nil, note: "Dock 프로세스를 찾지 못함")
+            return Scan(buttons: nil, note: "Dock 프로세스를 찾지 못함", tree: "")
         }
         let app = AXUIElementCreateApplication(dock.processIdentifier)
         var childrenRef: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &childrenRef)
         guard error == .success, let children = childrenRef as? [AXUIElement] else {
-            return Scan(buttons: nil, note: "Dock 접근성 트리를 읽지 못함 (AXError \(error.rawValue))")
+            return Scan(buttons: nil, note: "Dock 접근성 트리를 읽지 못함 (AXError \(error.rawValue))", tree: "")
         }
 
         let ids = children.map { identifier(of: $0) ?? "?" }
         let groups = children.filter { identifier(of: $0) == "mc" }
         guard !groups.isEmpty else {
-            return Scan(buttons: nil, note: "Mission Control 그룹(mc) 없음. Dock 최상위 항목: \(ids.joined(separator: ", "))")
+            return Scan(buttons: nil, note: "Mission Control 그룹(mc) 없음. Dock 최상위 항목: \(ids.joined(separator: ", "))", tree: "")
         }
 
         var buttons: [SpaceButton] = []
@@ -113,7 +115,39 @@ enum DockAccessibility {
             }
         }
         let note = notes.isEmpty ? "mc 그룹 \(groups.count)개, 버튼 \(buttons.count)개" : notes.joined(separator: "; ")
-        return Scan(buttons: buttons, note: note)
+        var tree = ""
+        if buttons.isEmpty {
+            var lines: [String] = []
+            for group in groups {
+                dump(group, depth: 0, maxDepth: 6, into: &lines)
+                if lines.count > 120 { break }
+            }
+            tree = lines.prefix(120).joined(separator: "\n")
+        }
+        return Scan(buttons: buttons, note: note, tree: tree)
+    }
+
+    /// 접근성 요소의 역할/식별자/설명/위치를 들여쓰기로 기록한다.
+    private static func dump(_ element: AXUIElement, depth: Int, maxDepth: Int, into lines: inout [String]) {
+        guard lines.count <= 120 else { return }
+        let role = attribute(element, kAXRoleAttribute) as? String ?? "?"
+        let id = identifier(of: element) ?? ""
+        let description = attribute(element, kAXDescriptionAttribute) as? String ?? ""
+        let title = attribute(element, kAXTitleAttribute) as? String ?? ""
+        let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+        var text = String(repeating: "  ", count: depth) + role
+        if !id.isEmpty { text += " id=\(id)" }
+        if !description.isEmpty { text += " desc=\"\(description)\"" }
+        if !title.isEmpty { text += " title=\"\(title)\"" }
+        if let f = frame(of: element) {
+            text += " (\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))"
+        }
+        if !children.isEmpty { text += " 자식 \(children.count)" }
+        lines.append(text)
+        guard depth < maxDepth else { return }
+        for child in children.prefix(15) {
+            dump(child, depth: depth + 1, maxDepth: maxDepth, into: &lines)
+        }
     }
 
     // MARK: - AX helpers
