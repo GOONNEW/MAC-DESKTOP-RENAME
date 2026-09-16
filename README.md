@@ -36,7 +36,7 @@ open build                      # Finder에서 build 폴더를 연 뒤 DesktopNa
 
 디버그 빌드는 `./scripts/build-app.sh debug`.
 
-이미 폴더가 있다면 아래 한 줄로 GitHub의 최신 코드를 받아 빌드하고 실행합니다.
+이미 폴더가 있다면 메뉴 막대 아이콘 → `최신 버전으로 업데이트…`를 누르면 됩니다. 터미널에서 직접 하려면:
 
 ```bash
 ./scripts/update.sh

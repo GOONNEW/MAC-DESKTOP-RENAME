@@ -10,6 +10,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onRenameSpace: (Space) -> Void
     private let onPrepareBadges: () -> Void
     private let onPreviewBadges: () -> Void
+    private let onUpdate: () -> Void
     private let onDiagnose: () -> Void
 
     private let statusItem: NSStatusItem
@@ -19,6 +20,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
          onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
          onPrepareBadges: @escaping () -> Void, onPreviewBadges: @escaping () -> Void,
+         onUpdate: @escaping () -> Void,
          onDiagnose: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
@@ -27,6 +29,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onRenameSpace = onRenameSpace
         self.onPrepareBadges = onPrepareBadges
         self.onPreviewBadges = onPreviewBadges
+        self.onUpdate = onUpdate
         self.onDiagnose = onDiagnose
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -181,6 +184,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         login.state = settings.launchAtLogin ? .on : .off
         menu.addItem(login)
 
+        if Updater.canUpdate {
+            let update = NSMenuItem(title: "최신 버전으로 업데이트…", action: #selector(update(_:)), keyEquivalent: "")
+            update.target = self
+            menu.addItem(update)
+        }
+
         let advanced = NSMenuItem(title: "고급", action: nil, keyEquivalent: "")
         let advancedMenu = NSMenu()
         advancedMenu.autoenablesItems = false
@@ -268,6 +277,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func prepareBadges(_ sender: Any?) {
         onPrepareBadges()
+    }
+
+    @objc private func update(_ sender: Any?) {
+        onUpdate()
     }
 
     @objc private func previewBadges(_ sender: Any?) {
