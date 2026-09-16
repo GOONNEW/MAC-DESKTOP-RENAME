@@ -39,11 +39,29 @@ final class TrackpadMonitor {
     private(set) static var lastCount = 0
     private(set) static var lastY: Float = -1
     private(set) static var lastRise: Float = 0
-    private(set) static var swipeCount = 0
+    static var swipeCount = 0
     private static var badReads = 0
+    /// 탐색 중 후보별로 관찰한 y 값들 (실제로 움직였는지 보기 위함)
+    private static var probeHistory: [Int: [Float]] = [:]
+    private static var lastLayoutNote = ""
+
     static var layoutNote: String {
-        guard let layout else { return "손가락 위치 탐색 중 (프레임 \(probeFrames)개)" }
+        guard let layout else {
+            let best = candidateScores.max(by: { $0.value < $1.value })
+            let detail = best.map { "최고 후보 \(candidates[$0.key].stride)바이트 점수 \($0.value)" } ?? "후보 없음"
+            return "손가락 위치 탐색 중 (프레임 \(probeFrames)개, \(detail))"
+        }
         return "구조체 \(layout.stride)바이트, y 위치 \(layout.yOffset)"
+    }
+
+    /// 확정한 자리가 틀렸을 때 다시 찾게 한다 (메뉴에서 호출)
+    static func resetLayout() {
+        layout = nil
+        candidateScores.removeAll()
+        probeHistory.removeAll()
+        probeFrames = 0
+        badReads = 0
+        swipeCount = 0
     }
 
     private static let handle: UnsafeMutableRawPointer? = {
@@ -97,22 +115,33 @@ final class TrackpadMonitor {
             return 0
         }
 
-        // 아직 자리를 못 찾았으면 후보를 점수로 가린다. 손가락이 많을수록 판별력이 높다.
+        // 아직 자리를 못 찾았으면 후보를 점수로 가린다.
+        // 범위 검사만으로는 우연히 통과하는 후보가 있어, "손가락이 실제로 움직인 기록"까지 본다.
         if layout == nil {
             probeFrames += 1
-            guard count >= 2 else { return 0 }
-            for (index, candidate) in candidates.enumerated() {
-                let score = (candidateScores[index] ?? 0)
-                    + (isPlausible(touches, count: count, candidate: candidate) ? 1 : -1)
-                candidateScores[index] = max(-5, min(score, scoreToConfirm))
+            guard count >= 2 else {
+                probeHistory.removeAll()
+                return 0
             }
-            // 가장 높은 점수가 기준을 넘고 2등과 차이가 나면 확정한다
-            let ranked = candidateScores.sorted { $0.value > $1.value }
-            if let best = ranked.first, best.value >= scoreToConfirm {
-                let second = ranked.dropFirst().first?.value ?? -5
-                if best.value > second || probeFrames > 200 {
-                    layout = candidates[best.key]
+            for (index, candidate) in candidates.enumerated() {
+                guard isPlausible(touches, count: count, candidate: candidate) else {
+                    candidateScores[index] = max(-5, (candidateScores[index] ?? 0) - 1)
+                    probeHistory[index] = nil
+                    continue
                 }
+                let y = averageY(touches, count: count, candidate: candidate)
+                var history = probeHistory[index] ?? []
+                history.append(y)
+                if history.count > 40 { history.removeFirst() }
+                probeHistory[index] = history
+                // 손가락이 위아래로 실제 움직인 폭이 있어야 진짜 좌표다
+                if let low = history.min(), let high = history.max(), high - low > 0.03 {
+                    candidateScores[index] = (candidateScores[index] ?? 0) + 2
+                }
+            }
+            if let best = candidateScores.max(by: { $0.value < $1.value }), best.value >= scoreToConfirm {
+                layout = candidates[best.key]
+                probeHistory.removeAll()
             }
             guard layout != nil else { return 0 }
         }
@@ -138,6 +167,7 @@ final class TrackpadMonitor {
         }
         badReads = 0
         lastY = y
+        lastLayoutNote = "\(found.stride)/\(found.yOffset)"
 
         if startY == nil || count != startCount {
             startY = y

@@ -207,6 +207,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         advancedMenu.addItem(.separator())
 
+        let resetTrackpad = NSMenuItem(title: "트랙패드 제스처 다시 인식", action: #selector(resetTrackpad(_:)), keyEquivalent: "")
+        resetTrackpad.target = self
+        advancedMenu.addItem(resetTrackpad)
+
         let resetTrust = NSMenuItem(title: "접근성 권한 초기화 후 다시 요청", action: #selector(resetTrust(_:)), keyEquivalent: "")
         resetTrust.target = self
         advancedMenu.addItem(resetTrust)
@@ -239,6 +243,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func renameSpace(_ sender: NSMenuItem) {
         guard let space = sender.representedObject as? Space else { return }
         onRenameSpace(space)
+    }
+
+    @objc private func resetTrackpad(_ sender: Any?) {
+        TrackpadMonitor.resetLayout()
+        let alert = NSAlert()
+        alert.messageText = "트랙패드 제스처 다시 인식"
+        alert.informativeText = "이제 트랙패드에 세 손가락을 얹고 위아래로 몇 번 움직여 주세요. 손가락 위치를 다시 찾습니다."
+        alert.addButton(withTitle: "확인")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func resetTrust(_ sender: Any?) {
