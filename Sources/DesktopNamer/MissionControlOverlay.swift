@@ -318,6 +318,7 @@ final class MissionControlOverlay {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         var lines: [String] = []
+        lines.append("macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)")
         lines.append("접근성 권한: \(DockAccessibility.isTrusted ? "허용됨" : "없음")")
         lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
