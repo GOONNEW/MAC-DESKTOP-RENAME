@@ -47,4 +47,4 @@ else
 fi
 
 echo "빌드 완료: $APP"
-echo "실행: open \"$APP\""
+echo "실행: Finder에서 $APP 을 더블클릭 (터미널의 open 명령으로 실행하면 접근성 권한이 인식되지 않을 수 있음)"

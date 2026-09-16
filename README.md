@@ -19,8 +19,10 @@ macOS는 Mission Control의 데스크탑 이름을 바꾸는 공개 API를 제�
 
 ```bash
 ./scripts/build-app.sh          # build/DesktopNamer.app 생성
-open build/DesktopNamer.app
+open build                      # Finder에서 build 폴더를 연 뒤 DesktopNamer.app을 더블클릭
 ```
+
+앱은 Finder에서 더블클릭으로 실행하세요. 터미널에서 `open build/DesktopNamer.app`으로 실행하면 macOS가 접근성 권한을 터미널 기준으로 판정해 Mission Control 오버레이가 동작하지 않을 수 있습니다.
 
 디버그 빌드는 `./scripts/build-app.sh debug`.
 
