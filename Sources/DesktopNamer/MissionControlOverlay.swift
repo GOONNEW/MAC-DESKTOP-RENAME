@@ -76,12 +76,11 @@ final class MissionControlOverlay {
             self?.dismiss(reason: "앱 전환")
         }
         // Mission Control 안에서의 클릭이나 키 입력은 거의 항상 닫는 동작이다
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
+        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown], handler: { [weak self] event in
             let reason = event.type == .keyDown ? "키 입력" : "클릭"
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.dismiss(reason: reason) }
-        } {
-            inputMonitors.append(monitor)
-        }
+        })
+        if let monitor { inputMonitors.append(monitor) }
     }
 
     /// 이름표를 지우고, 닫힘이 감지될 때까지 다시 그리지 않는다.
