@@ -124,7 +124,7 @@ final class BadgeManager {
     func show(reason: String) {
         guard running, !isVisible else { return }
         hideTimer?.invalidate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             guard let self, self.running else { return }
             self.setVisible(true)
             self.shownAt = Date()
@@ -139,7 +139,7 @@ final class BadgeManager {
     func hide(reason: String) {
         guard isVisible else { return }
         // 막 보이기 시작한 직후(여는 제스처의 잔여 이벤트)는 무시한다
-        if let shownAt, Date().timeIntervalSince(shownAt) < 0.8 { return }
+        if let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
         setVisible(false)
         shownAt = nil

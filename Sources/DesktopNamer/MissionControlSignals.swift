@@ -89,7 +89,7 @@ final class MissionControlSignals {
     private func open(_ reason: String) {
         let now = Date()
         // 같은 쓸기의 반복 감지는 무시
-        if now.timeIntervalSince(lastGestureAt) < 0.8 { return }
+        if now.timeIntervalSince(lastGestureAt) < 0.4 { return }
         lastGestureAt = now
 
         let formatter = DateFormatter()
