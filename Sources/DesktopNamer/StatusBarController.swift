@@ -139,6 +139,30 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         corner.submenu = cornerMenu
         menu.addItem(corner)
 
+        let size = NSMenuItem(title: "이름 크기", action: nil, keyEquivalent: "")
+        size.indentationLevel = 1
+        size.isEnabled = settings.badgeEnabled
+        let sizeMenu = NSMenu()
+        sizeMenu.autoenablesItems = false
+        for value in BadgeManager.Size.allCases {
+            let item = NSMenuItem(title: value.title, action: #selector(setBadgeSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = value.rawValue
+            item.state = settings.badgeSize == value ? .on : .off
+            sizeMenu.addItem(item)
+        }
+        size.submenu = sizeMenu
+        menu.addItem(size)
+
+        if NSScreen.screens.count > 1 {
+            let mainOnly = NSMenuItem(title: "주 화면에만 표시", action: #selector(toggleMainScreenOnly(_:)), keyEquivalent: "")
+            mainOnly.target = self
+            mainOnly.state = settings.badgeMainScreenOnly ? .on : .off
+            mainOnly.indentationLevel = 1
+            mainOnly.isEnabled = settings.badgeEnabled
+            menu.addItem(mainOnly)
+        }
+
         let prepare = NSMenuItem(title: "모든 데스크탑에 이름 준비", action: #selector(prepareBadges(_:)), keyEquivalent: "")
         prepare.target = self
         prepare.indentationLevel = 1
@@ -229,6 +253,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         guard let raw = sender.representedObject as? String,
               let corner = BadgeManager.Corner(rawValue: raw) else { return }
         settings.badgeCorner = corner
+    }
+
+    @objc private func setBadgeSize(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let value = BadgeManager.Size(rawValue: raw) else { return }
+        settings.badgeSize = value
+    }
+
+    @objc private func toggleMainScreenOnly(_ sender: Any?) {
+        settings.badgeMainScreenOnly.toggle()
     }
 
     @objc private func prepareBadges(_ sender: Any?) {

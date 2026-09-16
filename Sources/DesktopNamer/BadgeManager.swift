@@ -36,8 +36,39 @@ final class BadgeManager {
         didSet { badges.keys.forEach { layout(uuid: $0) } }
     }
 
-    /// 글자 크기. Mission Control 썸네일(약 1/12)에서 읽히려면 커야 한다.
-    private let fontSize: CGFloat = 64
+    enum Size: String, CaseIterable {
+        case medium, large, huge
+
+        var title: String {
+            switch self {
+            case .medium: return "보통"
+            case .large: return "크게"
+            case .huge: return "아주 크게"
+            }
+        }
+
+        /// 화면 높이 대비 글자 크기 비율
+        var ratio: CGFloat {
+            switch self {
+            case .medium: return 0.10
+            case .large: return 0.16
+            case .huge: return 0.24
+            }
+        }
+    }
+
+    var size: Size = .large {
+        didSet { badges.keys.forEach { layout(uuid: $0) } }
+    }
+
+    /// true면 주 화면에만 배지를 만든다 (듀얼 모니터에서 한쪽만 보이게)
+    var mainScreenOnly = false {
+        didSet {
+            guard mainScreenOnly != oldValue else { return }
+            rebuildAll()
+        }
+    }
+
     private let margin = CGSize(width: 40, height: 96) // 아래쪽은 Dock 자리를 피한다
 
     init(spaces: SpaceManager, names: NameStore) {
@@ -140,7 +171,8 @@ final class BadgeManager {
         guard running, space.isActive, !space.isFullscreen, badges[space.uuid] == nil else { return }
         var panels: [NSPanel] = []
         var texts: [NSTextField] = []
-        for screen in NSScreen.screens {
+        let targets = mainScreenOnly ? [NSScreen.main ?? NSScreen.screens[0]] : NSScreen.screens
+        for screen in targets {
             let (panel, field) = makePanel(on: screen, text: names.displayName(for: space))
             panels.append(panel)
             texts.append(field)
@@ -158,7 +190,7 @@ final class BadgeManager {
 
     private func makePanel(on screen: NSScreen, text: String) -> (NSPanel, NSTextField) {
         let field = NSTextField(labelWithString: text)
-        field.font = .systemFont(ofSize: fontSize, weight: .heavy)
+        field.font = .systemFont(ofSize: (screen.frame.height * size.ratio).rounded(), weight: .heavy)
         field.textColor = .white
         field.alignment = .center
         field.lineBreakMode = .byTruncatingTail
@@ -185,8 +217,10 @@ final class BadgeManager {
         panel.isReleasedWhenClosed = false
         // 창들 위에 떠서 썸네일에서 항상 보이게. 평소엔 투명이라 방해하지 않는다.
         panel.level = .floating
-        // 이 데스크탑에만 속한다 (canJoinAllSpaces 없음)
-        panel.collectionBehavior = [.ignoresCycle, .fullScreenAuxiliary, .managed]
+        // 이 데스크탑에만 속하게 한다. moveToActiveSpace/canJoinAllSpaces가 없어야 따라다니지 않는다.
+        panel.collectionBehavior = [.stationary, .ignoresCycle]
+        // 앱이 활성화될 때 창을 현재 데스크탑으로 끌어오지 않도록
+        panel.isFloatingPanel = true
         panel.contentView = container
         panel.orderFrontRegardless()
         return (panel, field)
@@ -209,12 +243,22 @@ final class BadgeManager {
             guard index < texts.count else { continue }
             let field = texts[index]
             let screen = panel.screen ?? NSScreen.screens[min(index, NSScreen.screens.count - 1)]
+            var pointSize = (screen.frame.height * size.ratio).rounded()
+            let maxWidth = screen.frame.width * 0.8
+            let paddingX = (pointSize * 0.4).rounded()
+            let paddingY = (pointSize * 0.22).rounded()
+            // 이름이 길면 화면에 들어갈 때까지 글자를 줄인다
+            while pointSize > 18 {
+                field.font = .systemFont(ofSize: pointSize, weight: .heavy)
+                field.sizeToFit()
+                if field.frame.width + paddingX * 2 <= maxWidth { break }
+                pointSize -= 4
+            }
+            field.font = .systemFont(ofSize: pointSize, weight: .heavy)
             field.sizeToFit()
-            let paddingX: CGFloat = 34
-            let paddingY: CGFloat = 16
-            let maxWidth = screen.frame.width * 0.6
             let width = min(field.frame.width + paddingX * 2, maxWidth)
             let height = field.frame.height + paddingY * 2
+            (panel.contentView?.layer)?.cornerRadius = (height * 0.28).rounded()
             field.frame = CGRect(x: paddingX, y: paddingY, width: width - paddingX * 2, height: field.frame.height)
             panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
 
@@ -233,6 +277,15 @@ final class BadgeManager {
             }
             panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
         }
+    }
+
+    /// 설정이 바뀌면 배지를 다시 만든다 (지금 데스크탑 것만. 나머지는 방문 시 다시 만들어진다)
+    private func rebuildAll() {
+        badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
+        badges.removeAll()
+        fields.removeAll()
+        if let active = spaces.activeSpace { ensureBadge(for: active) }
+        log("배지 다시 만듦 (설정 변경)")
     }
 
     private func removeBadges(notIn uuids: Set<String>) {
@@ -286,7 +339,8 @@ final class BadgeManager {
 
     func diagnostics() -> String {
         var lines: [String] = []
-        lines.append("이름 배지: \(running ? "켜짐" : "꺼짐"), 지금 \(isVisible ? "보임" : "숨김"), 위치 \(corner.title)")
+        lines.append("이름 배지: \(running ? "켜짐" : "꺼짐"), 지금 \(isVisible ? "보임" : "숨김"), 위치 \(corner.title), 크기 \(size.title), \(mainScreenOnly ? "주 화면만" : "모든 화면")")
+        lines.append("화면 수: \(NSScreen.screens.count), 배지 창 수: \(badges.values.reduce(0) { $0 + $1.count })")
         let prepared = spaces.spaces.filter { badges[$0.uuid] != nil }.map { $0.defaultName }
         let missing = spaces.spaces.filter { !$0.isFullscreen && badges[$0.uuid] == nil }.map { $0.defaultName }
         lines.append("배지 있는 데스크탑: \(prepared.isEmpty ? "없음" : prepared.joined(separator: ", "))")

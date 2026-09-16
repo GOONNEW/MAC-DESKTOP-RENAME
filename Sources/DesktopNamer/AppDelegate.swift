@@ -67,6 +67,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] corner in self?.badges?.corner = corner }
             .store(in: &cancellables)
 
+        settings.$badgeSize
+            .sink { [weak self] size in self?.badges?.size = size }
+            .store(in: &cancellables)
+
+        settings.$badgeMainScreenOnly
+            .sink { [weak self] only in self?.badges?.mainScreenOnly = only }
+            .store(in: &cancellables)
+
         settings.$alwaysWatch
             .sink { [weak self] always in self?.overlay?.alwaysWatch = always }
             .store(in: &cancellables)

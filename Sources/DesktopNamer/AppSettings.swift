@@ -7,6 +7,8 @@ final class AppSettings: ObservableObject {
     private static let alwaysWatchKey = "alwaysWatch"
     private static let badgeKey = "badgeEnabled"
     private static let badgeCornerKey = "badgeCorner"
+    private static let badgeSizeKey = "badgeSize"
+    private static let badgeMainOnlyKey = "badgeMainScreenOnly"
 
     @Published var overlayEnabled: Bool {
         didSet { UserDefaults.standard.set(overlayEnabled, forKey: Self.overlayKey) }
@@ -19,6 +21,15 @@ final class AppSettings: ObservableObject {
 
     @Published var badgeCorner: BadgeManager.Corner {
         didSet { UserDefaults.standard.set(badgeCorner.rawValue, forKey: Self.badgeCornerKey) }
+    }
+
+    @Published var badgeSize: BadgeManager.Size {
+        didSet { UserDefaults.standard.set(badgeSize.rawValue, forKey: Self.badgeSizeKey) }
+    }
+
+    /// 듀얼 모니터에서 주 화면에만 이름을 표시한다
+    @Published var badgeMainScreenOnly: Bool {
+        didSet { UserDefaults.standard.set(badgeMainScreenOnly, forKey: Self.badgeMainOnlyKey) }
     }
 
     /// 화면 감시를 항상 켠다 (가장 빠르지만 메뉴 막대에 화면 기록 표시가 계속 뜬다)
@@ -52,6 +63,8 @@ final class AppSettings: ObservableObject {
         // 배지는 기본으로 켠다 (한 번도 설정한 적 없으면 true)
         badgeEnabled = UserDefaults.standard.object(forKey: Self.badgeKey) as? Bool ?? true
         badgeCorner = (UserDefaults.standard.string(forKey: Self.badgeCornerKey)).flatMap(BadgeManager.Corner.init(rawValue:)) ?? .bottomRight
+        badgeSize = (UserDefaults.standard.string(forKey: Self.badgeSizeKey)).flatMap(BadgeManager.Size.init(rawValue:)) ?? .large
+        badgeMainScreenOnly = UserDefaults.standard.bool(forKey: Self.badgeMainOnlyKey)
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
