@@ -35,6 +35,9 @@ final class MissionControlSignals {
         TrackpadMonitor.onSwipeUp = { [weak self] count in
             self?.open("트랙패드 \(count)손가락 위로 쓸기")
         }
+        TrackpadMonitor.onSwipeDown = { [weak self] count in
+            self?.onCloseLikely?("트랙패드 \(count)손가락 아래로 쓸기")
+        }
         trackpadWorks = trackpad.startMonitoring()
 
         keyboard.onTrigger = { [weak self] reason in self?.open(reason) }

@@ -16,6 +16,8 @@ final class TrackpadMonitor {
 
     /// 메인 스레드에서, 세 손가락 이상으로 위로 쓸었을 때 호출된다. 인자는 손가락 개수.
     static var onSwipeUp: ((Int) -> Void)?
+    /// 세 손가락 이상으로 아래로 쓸었을 때 (Mission Control 닫기)
+    static var onSwipeDown: ((Int) -> Void)?
 
     /// 시험해 볼 (구조체 크기, y 위치) 후보들
     private static let candidates: [(stride: Int, yOffset: Int)] = {
@@ -192,12 +194,15 @@ final class TrackpadMonitor {
 
         let rise = y - origin
         lastRise = rise
-        // 위로 충분히 올라갔을 때만 알린다 (가만히 얹거나 좌우로 쓸면 반응하지 않음)
-        if rise >= minimumRise {
+        // 위아래로 충분히 움직였을 때만 알린다 (가만히 얹거나 좌우로 쓸면 반응하지 않음)
+        if abs(rise) >= minimumRise {
             fired = true
             swipeCount += 1
             let fingers = count
-            DispatchQueue.main.async { onSwipeUp?(fingers) }
+            let up = rise > 0
+            DispatchQueue.main.async {
+                up ? onSwipeUp?(fingers) : onSwipeDown?(fingers)
+            }
         }
         return 0
     }

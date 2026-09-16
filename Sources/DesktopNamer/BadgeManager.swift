@@ -131,7 +131,7 @@ final class BadgeManager {
             self.log("표시 (\(reason))")
         }
         // 닫힘 신호를 모두 놓쳐도 오래 남지 않도록
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+        hideTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
             self?.hide(reason: "시간 초과")
         }
     }
