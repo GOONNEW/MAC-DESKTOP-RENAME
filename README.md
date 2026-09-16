@@ -9,13 +9,14 @@ macOS Mission Control의 "데스크탑 N"에 내가 정한 이름을 붙이는 �
 
 ## 왜 "덮어 그리기"인가
 
-macOS는 Mission Control의 데스크탑 이름을 바꾸는 공개 API를 제공하지 않습니다. 이 앱은 비공개 SkyLight API로 공간 목록과 현재 공간을 읽고, Mission Control이 열린 동안 Dock의 접근성 트리에서 썸네일 위치를 읽어 투명 패널에 이름표를 그립니다. 그래서:
+macOS는 Mission Control의 데스크탑 이름을 바꾸는 공개 API를 제공하지 않습니다. 이 앱은 비공개 SkyLight API로 공간 목록과 현재 공간을 읽고, Mission Control이 열리면 화면 위쪽을 잠깐 캡처해 "데스크탑 N" 글자를 인식한 뒤 그 자리에 투명 패널로 이름표를 그립니다. (Dock의 접근성 트리는 최신 macOS에서 비어 있어 쓰지 않습니다.) 그래서:
 
 - 비공개 API를 쓰므로 App Store 배포는 불가하고, macOS 대규모 업데이트 뒤 동작이 바뀔 수 있습니다.
-- 오버레이 기능은 **손쉬운 사용(접근성) 권한**이 필요합니다.
+- 오버레이 기능은 **손쉬운 사용 권한**과 **화면 기록 권한**이 필요합니다.
 - 메뉴 막대 표시와 이름 저장은 오버레이 없이도 동작합니다.
+- macOS 14 이상이 필요합니다.
 
-## 빌드 (macOS 13 이상, Xcode Command Line Tools 필요)
+## 빌드 (macOS 14 이상, Xcode Command Line Tools 필요)
 
 ```bash
 ./scripts/build-app.sh          # build/DesktopNamer.app 생성
@@ -50,7 +51,8 @@ open build                      # Finder에서 build 폴더를 연 뒤 DesktopNa
 | `NameStore.swift` | UUID → 이름 저장 (UserDefaults) |
 | `StatusBarController.swift` | 메뉴 막대 항목과 메뉴 |
 | `RenameWindow.swift` | 이름 편집 창 (SwiftUI) |
-| `DockAccessibility.swift` | Mission Control 중 Dock 접근성 트리에서 썸네일 위치 읽기 |
+| `DockAccessibility.swift` | 접근성 권한 관리, Mission Control 열림 감지, 진단 |
+| `ScreenText.swift` | 화면 위쪽 캡처와 "데스크탑 N" 글자 인식 |
 | `MissionControlOverlay.swift` | 이름표 오버레이 패널 |
 
 ## 다시 빌드한 뒤 접근성 권한이 안 먹을 때

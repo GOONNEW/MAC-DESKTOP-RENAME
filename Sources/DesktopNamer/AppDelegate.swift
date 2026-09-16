@@ -28,7 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             names: nameStore,
             settings: settings,
             onRename: { [weak self] in self?.renameWindow?.show() },
-            onDiagnose: { [weak self] in self?.showDiagnostics() }
+            onDiagnose: { [weak self] in self?.showDiagnostics() },
+            onVisibilityTest: { [weak self] in self?.overlay?.runVisibilityTest() }
         )
 
         spaceManager.start()

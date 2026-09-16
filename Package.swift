@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DesktopNamer",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
             name: "DesktopNamer",
@@ -13,6 +13,8 @@ let package = Package(
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("ApplicationServices"),
+                .linkedFramework("ScreenCaptureKit"),
+                .linkedFramework("Vision"),
             ]
         ),
     ]

@@ -1,36 +1,41 @@
 import AppKit
 
-/// Mission Control이 열리면 각 데스크탑 썸네일 아래 라벨 자리에 사용자 지정 이름을 덮어 그린다.
+/// Mission Control이 열리면 "데스크탑 N" 라벨 자리에 사용자 지정 이름을 덮어 그린다.
+/// 라벨 위치는 화면을 찍어 글자를 인식해서 찾는다 (이 macOS에서는 Dock 접근성 트리가 비어 있음).
 final class MissionControlOverlay {
-    private let spaces: SpaceManager
-    private let names: NameStore
-
     private struct Label: Equatable {
         let frame: CGRect
         let text: String
     }
+
+    private let spaces: SpaceManager
+    private let names: NameStore
 
     private var timer: Timer?
     private var panels: [NSPanel] = []
     private var isShowing = false
     private var currentLabels: [Label] = []
 
-    // 진단 정보
-    private var lastDetection: Date?
-    private var lastScanNote = "아직 실행 안 됨"
-    private var lastButtons: [DockAccessibility.SpaceButton] = []
-    private var lastLabelNote = ""
-    private var tickCount = 0
-    private var lastTree = ""
-    private var bestTreeLines = 0
-    private var mcOpenTicks = 0
-    private var mcOpenWithChildrenTicks = 0
-    private var lastDockWindows = ""
-    private var enhancedNote = ""
+    /// 캡처할 화면 위쪽 비율
+    private let captureFraction: CGFloat = 0.3
 
-    /// 버튼 프레임 바닥에서 라벨 중심까지의 거리. Mission Control의 라벨 위치에 맞춰 조정한다.
-    private let labelBottomInset: CGFloat = 12
-    private let labelHeight: CGFloat = 22
+    // Mission Control 열림 상태와 인식 시도
+    private var wasOpen = false
+    private var openedAt: Date?
+    private var ocrAttempts = 0
+    private var ocrInFlight = false
+    private var nextOCRAt = Date.distantPast
+    private let maxOCRAttempts = 6
+
+    // 진단 정보
+    private var tickCount = 0
+    private var openCount = 0
+    private var lastOpenAt: Date?
+    private var lastOCRNote = "아직 실행 안 됨"
+    private var lastOCRTexts: [String] = []
+    private var lastLabelNote = ""
+    private var axNote = ""
+    private var testMode = false
 
     init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
@@ -45,7 +50,9 @@ final class MissionControlOverlay {
             DockAccessibility.requestTrust()
             Self.showPermissionHelp()
         }
-        enhancedNote = DockAccessibility.setEnhancedAccessibility(true)
+        if !ScreenText.hasScreenCaptureAccess {
+            ScreenText.requestScreenCaptureAccess()
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -56,112 +63,144 @@ final class MissionControlOverlay {
         timer?.invalidate()
         timer = nil
         hide()
-        _ = DockAccessibility.setEnhancedAccessibility(false)
     }
+
+    /// 15초 동안 Mission Control이 열리면 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
+    func runVisibilityTest() {
+        testMode = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            self?.testMode = false
+            self?.hide()
+        }
+    }
+
+    // MARK: - 주기 검사
 
     private func tick() {
         tickCount += 1
-        guard DockAccessibility.isTrusted else {
-            lastScanNote = "접근성 권한 없음"
-            if isShowing { hide() }
+        let open = DockAccessibility.isMissionControlLikelyOpen()
+
+        if !open {
+            if wasOpen {
+                hide()
+                ocrAttempts = 0
+                ocrInFlight = false
+            }
+            wasOpen = false
             return
         }
-        let scan = DockAccessibility.scan()
-        guard let buttons = scan.buttons else {
-            // Mission Control이 닫혀 있는 평소 상태. 마지막 감지 기록은 유지한다.
-            if isShowing { hide() }
+
+        if !wasOpen {
+            wasOpen = true
+            openedAt = Date()
+            lastOpenAt = openedAt
+            openCount += 1
+            ocrAttempts = 0
+            nextOCRAt = Date().addingTimeInterval(0.35) // 열리는 애니메이션이 끝날 때까지 대기
+            axNote = DockAccessibility.scan().note
+        }
+
+        if testMode, !isShowing, let screen = NSScreen.screens.first {
+            let frame = CGRect(x: screen.frame.midX - 60, y: screen.frame.maxY - 220, width: 120, height: 24)
+            rebuildPanels(with: [Label(frame: frame, text: "테스트 이름표")])
+            isShowing = true
             return
         }
-        let treeLines = scan.tree.split(separator: "\n").count
-        if treeLines > bestTreeLines {
-            bestTreeLines = treeLines
-            lastTree = scan.tree
-        }
-        if DockAccessibility.isMissionControlLikelyOpen() {
-            mcOpenTicks += 1
-            if treeLines > 1 { mcOpenWithChildrenTicks += 1 }
-            lastDetection = Date()
-            lastDockWindows = DockAccessibility.dockWindows()
-                .map { "\($0.name.isEmpty ? "(이름 없음)" : $0.name) \(Int($0.frame.width))×\(Int($0.frame.height)) layer \($0.layer)" }
-                .joined(separator: " / ")
-        }
-        lastScanNote = scan.note
-        if !buttons.isEmpty { lastButtons = buttons }
-        show(buttons)
+
+        guard !isShowing, !ocrInFlight, ocrAttempts < maxOCRAttempts, Date() >= nextOCRAt else { return }
+        startOCR()
     }
 
-    /// 사용자가 붙여넣어 보낼 수 있는 진단 텍스트
+    private func startOCR() {
+        guard ScreenText.hasScreenCaptureAccess else {
+            lastOCRNote = "화면 기록 권한 없음"
+            ocrAttempts = maxOCRAttempts
+            return
+        }
+        guard let screen = NSScreen.screens.first else { return }
+        ocrInFlight = true
+        ocrAttempts += 1
+        let fraction = captureFraction
+
+        Task { [weak self] in
+            do {
+                let image = try await ScreenText.captureTopStrip(of: screen, fraction: fraction)
+                let result = try ScreenText.recognizeDesktopLabels(in: image, screen: screen, fraction: fraction)
+                await MainActor.run { self?.finishOCR(result, error: nil) }
+            } catch {
+                await MainActor.run { self?.finishOCR(nil, error: error) }
+            }
+        }
+    }
+
+    private func finishOCR(_ result: ScreenText.Result?, error: Error?) {
+        ocrInFlight = false
+        nextOCRAt = Date().addingTimeInterval(0.3)
+
+        guard let result else {
+            lastOCRNote = "캡처/인식 실패: \(error?.localizedDescription ?? "알 수 없음")"
+            return
+        }
+        lastOCRTexts = Array(result.allText.prefix(20))
+        lastOCRNote = "시도 \(ocrAttempts)회, 글자 \(result.allText.count)개, 데스크탑 라벨 \(result.labels.count)개"
+        guard !result.labels.isEmpty, wasOpen else { return }
+
+        let byNumber = Dictionary(
+            spaces.spaces.compactMap { space in space.number.map { ($0, space) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var labels: [Label] = []
+        for found in result.labels {
+            guard let space = byNumber[found.number], let custom = names.customName(for: space) else { continue }
+            // 원래 글자를 완전히 덮도록 조금 넓게
+            let frame = found.frame.insetBy(dx: -10, dy: -5)
+            labels.append(Label(frame: frame, text: custom))
+        }
+        lastLabelNote = labels.isEmpty
+            ? "없음 (인식한 라벨 \(result.labels.map(\.text).joined(separator: ", ")) 중 이름이 지정된 것이 없음)"
+            : labels.map { "\($0.text) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY)))" }.joined(separator: ", ")
+
+        // 라벨은 찾았지만 이름이 없는 경우도 "완료"로 보고 더 시도하지 않는다.
+        ocrAttempts = maxOCRAttempts
+        guard !labels.isEmpty else { return }
+        rebuildPanels(with: labels)
+        currentLabels = labels
+        isShowing = true
+    }
+
+    // MARK: - 진단
+
     func diagnostics() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         var lines: [String] = []
-        lines.append("접근성 권한: \(DockAccessibility.isTrusted ? "허용됨" : "없음 (시스템 설정에서 DesktopNamer를 지운 뒤 다시 추가)")")
+        lines.append("접근성 권한: \(DockAccessibility.isTrusted ? "허용됨" : "없음")")
+        lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
-        lines.append("번들 ID: \(Bundle.main.bundleIdentifier ?? "없음")")
         lines.append("오버레이 실행 중: \(isRunning ? "예" : "아니오") (검사 \(tickCount)회)")
-        lines.append("Mission Control 마지막 감지: \(lastDetection.map { formatter.string(from: $0) } ?? "없음")")
-        lines.append("마지막 검사 메모: \(lastScanNote)")
-        if !lastButtons.isEmpty {
-            lines.append("감지된 버튼:")
-            for button in lastButtons {
-                let f = button.frame
-                let number = button.number.map { String($0) } ?? "-"
-                lines.append("  \(button.description) → 번호 \(number), 위치 (\(Int(f.minX)), \(Int(f.minY))) 크기 \(Int(f.width))×\(Int(f.height))")
-            }
+        lines.append("Mission Control 열림 감지: \(openCount)회, 마지막 \(lastOpenAt.map { formatter.string(from: $0) } ?? "없음")")
+        lines.append("글자 인식: \(lastOCRNote)")
+        if !lastOCRTexts.isEmpty {
+            lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))
         }
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
-        lines.append("Dock 확장 접근성 신호 결과: \(enhancedNote) (0이면 성공)")
-        lines.append("Dock 전체 화면 창으로 본 Mission Control 열림: \(mcOpenTicks)회, 그중 mc 그룹에 내용이 있던 때: \(mcOpenWithChildrenTicks)회")
-        if !lastDockWindows.isEmpty {
-            lines.append("열렸을 때 Dock 창: \(lastDockWindows)")
-        }
-        if !lastTree.isEmpty {
-            lines.append("Mission Control 내부 구조 (가장 내용이 많았던 순간, \(bestTreeLines)줄):")
-            lines.append(lastTree)
-        }
+        if !axNote.isEmpty { lines.append("Dock 접근성 검사: \(axNote)") }
         lines.append("이름 저장 목록: \(names.names.isEmpty ? "없음" : names.names.values.joined(separator: ", "))")
         lines.append("공간 목록: " + spaces.spaces.map { $0.number.map { String($0) } ?? "전체화면" }.joined(separator: ", "))
-        lines.append("화면: " + NSScreen.screens.map { "\(Int($0.frame.width))×\(Int($0.frame.height)) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY)))" }.joined(separator: " / "))
+        lines.append("화면: " + NSScreen.screens.map { "\(Int($0.frame.width))×\(Int($0.frame.height)) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY))) 배율 \($0.backingScaleFactor)" }.joined(separator: " / "))
         return lines.joined(separator: "\n")
     }
 
     static func showPermissionHelp() {
         let alert = NSAlert()
         alert.messageText = "손쉬운 사용 권한이 필요합니다"
-        alert.informativeText = "Mission Control에 이름을 표시하려면 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 DesktopNamer를 켜야 합니다.\n\n이미 켜져 있는데도 이 창이 뜬다면, 앱을 다시 빌드해서 권한이 무효화된 것입니다. 목록에서 DesktopNamer를 선택하고 빼기(-) 버튼으로 지운 뒤, 앱을 다시 실행해서 새로 추가하세요."
+        alert.informativeText = "시스템 설정 > 개인정보 보호 및 보안에서 DesktopNamer를 켜 주세요. 이미 켜져 있는데도 이 창이 뜬다면 메뉴의 '접근성 권한 초기화 후 다시 요청'을 눌러 주세요."
         alert.addButton(withTitle: "확인")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }
 
-    private func show(_ buttons: [DockAccessibility.SpaceButton]) {
-        let byNumber = Dictionary(
-            spaces.spaces.compactMap { space in space.number.map { ($0, space) } },
-            uniquingKeysWith: { first, _ in first }
-        )
-
-        var labels: [Label] = []
-        for button in buttons {
-            guard let number = button.number, let space = byNumber[number],
-                  let custom = names.customName(for: space) else { continue }
-            let frame = CGRect(
-                x: button.frame.minX,
-                y: button.frame.minY + labelBottomInset - labelHeight / 2,
-                width: button.frame.width,
-                height: labelHeight
-            )
-            labels.append(Label(frame: frame, text: custom))
-        }
-
-        lastLabelNote = labels.isEmpty
-            ? "없음 (버튼 \(buttons.count)개 중 이름이 지정된 데스크탑과 번호가 맞는 것이 없음)"
-            : labels.map { "\($0.text) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY)))" }.joined(separator: ", ")
-        if labels != currentLabels || !isShowing {
-            rebuildPanels(with: labels)
-            currentLabels = labels
-        }
-        isShowing = true
-    }
+    // MARK: - 패널 그리기
 
     private func hide() {
         panels.forEach { $0.orderOut(nil) }
@@ -218,18 +257,19 @@ final class MissionControlOverlay {
         field.sizeToFit()
 
         let padding: CGFloat = 10
-        let width = min(field.frame.width + padding * 2, area.width)
+        let width = max(field.frame.width + padding * 2, area.width)
+        let height = max(area.height, 22)
         let pill = NSView(frame: CGRect(
             x: area.midX - width / 2,
-            y: area.minY,
+            y: area.midY - height / 2,
             width: width,
-            height: area.height
+            height: height
         ))
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.78).cgColor
-        pill.layer?.cornerRadius = 6
+        pill.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.85).cgColor
+        pill.layer?.cornerRadius = height / 2
 
-        field.frame = pill.bounds.insetBy(dx: padding, dy: 0)
+        field.frame = CGRect(x: padding, y: (height - field.frame.height) / 2, width: width - padding * 2, height: field.frame.height)
         pill.addSubview(field)
         return pill
     }

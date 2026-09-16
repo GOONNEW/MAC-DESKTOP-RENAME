@@ -8,18 +8,21 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let settings: AppSettings
     private let onRename: () -> Void
     private let onDiagnose: () -> Void
+    private let onVisibilityTest: () -> Void
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private var cancellables = Set<AnyCancellable>()
 
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
-         onRename: @escaping () -> Void, onDiagnose: @escaping () -> Void) {
+         onRename: @escaping () -> Void, onDiagnose: @escaping () -> Void,
+         onVisibilityTest: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
         self.onRename = onRename
         self.onDiagnose = onDiagnose
+        self.onVisibilityTest = onVisibilityTest
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -100,6 +103,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         resetTrust.target = self
         menu.addItem(resetTrust)
 
+        let test = NSMenuItem(title: "오버레이 표시 테스트 (15초)", action: #selector(visibilityTest(_:)), keyEquivalent: "")
+        test.target = self
+        menu.addItem(test)
+
         let diagnose = NSMenuItem(title: "문제 진단…", action: #selector(diagnose(_:)), keyEquivalent: "")
         diagnose.target = self
         menu.addItem(diagnose)
@@ -130,6 +137,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         alert.addButton(withTitle: "확인")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
+    }
+
+    @objc private func visibilityTest(_ sender: Any?) {
+        onVisibilityTest()
     }
 
     @objc private func diagnose(_ sender: Any?) {
