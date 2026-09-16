@@ -115,6 +115,11 @@ final class ScreenStream: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var isRunning: Bool { stream != nil }
 
+    /// 프레임 처리와 같은 큐에서 실행한다 (큐에서 읽는 상태를 안전하게 바꿀 때 사용)
+    func perform(_ block: @escaping () -> Void) {
+        queue.async(execute: block)
+    }
+
     func start(strip: ScreenText.Strip) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let key = NSDeviceDescriptionKey("NSScreenNumber")

@@ -256,14 +256,11 @@ final class MissionControlOverlay {
     private func setShowing(_ showing: Bool) {
         isShowing = showing
         let midY = rowMidY
-        stream.onFrame = nil // 큐 상태 갱신 중 경쟁 방지용은 아니지만, 아래 값은 큐에서 읽으므로 async로 넘긴다
-        streamQueueUpdate(showing: showing, midY: midY)
-        stream.onFrame = { [weak self] buffer in self?.handleFrame(buffer) }
-    }
-
-    private func streamQueueUpdate(showing: Bool, midY: CGFloat?) {
-        showingForQueue = showing
-        rowMidYForQueue = midY
+        // 프레임 처리 큐에서 읽는 값이므로 그 큐에서 바꾼다
+        stream.perform { [weak self] in
+            self?.showingForQueue = showing
+            self?.rowMidYForQueue = midY
+        }
     }
 
     /// 이름표를 지우고, 닫히는 애니메이션 동안 잠깐 다시 그리지 않는다.
