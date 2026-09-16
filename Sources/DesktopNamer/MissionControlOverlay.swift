@@ -220,7 +220,7 @@ final class MissionControlOverlay {
             log("라벨 줄 발견 (\(result.labels.count)개) → 이름표 \(labels.count)개 표시")
         }
         guard !labels.isEmpty else {
-            if isShowing { hide() }
+            // 라벨 줄은 있는데 이름 지정된 것만 못 읽은 경우(애니메이션 중 등)는 기존 이름표를 유지한다
             return
         }
         // 이미 표시 중이면 개수가 바뀌거나 8pt 넘게 움직였을 때만 다시 그린다 (미세한 흔들림 방지)
