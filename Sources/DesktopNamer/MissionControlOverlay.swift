@@ -167,7 +167,7 @@ final class MissionControlOverlay {
         frameCount += 1
         if processing { return }
         // 이름표가 없을 때는 초당 4회까지만 인식한다 (일반 화면 변화에 CPU를 쓰지 않도록)
-        let minInterval: TimeInterval = showingForQueue ? 0 : 0.25
+        let minInterval: TimeInterval = showingForQueue ? 0 : 0.15
         guard Date().timeIntervalSince(lastProcessedAt) >= minInterval else { return }
         processing = true
         let started = Date()
@@ -205,6 +205,10 @@ final class MissionControlOverlay {
 
         guard !result.labels.isEmpty else {
             if isShowing {
+                // 원래 라벨 대신 우리 이름표 글자가 읽혔다면 아직 열려 있는 것 (캡처 제외가 안 된 경우 대비)
+                let ownTexts = Set(currentLabels.map(\.text))
+                let seenOwn = result.allText.filter { ownTexts.contains($0) }.count
+                if seenOwn >= min(2, ownTexts.count) { return }
                 log("라벨 줄이 사라짐 → 이름표 제거")
                 hide()
             }
@@ -361,6 +365,8 @@ final class MissionControlOverlay {
             panel.hasShadow = false
             panel.ignoresMouseEvents = true
             panel.hidesOnDeactivate = false
+            // 화면 캡처에서 제외: 우리 이름표가 원래 라벨을 가려 "라벨이 사라졌다"고 착각하지 않도록
+            panel.sharingType = .none
             panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
             pill.frame.origin = .zero

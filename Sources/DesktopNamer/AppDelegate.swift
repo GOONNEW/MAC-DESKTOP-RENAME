@@ -77,9 +77,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let text = overlay.diagnostics()
         let alert = NSAlert()
         alert.messageText = "문제 진단"
-        alert.informativeText = "Mission Control을 2초쯤 열었다가 닫은 뒤 이 창을 열면 감지 결과가 채워집니다.\n\n" + text
+        alert.informativeText = "아래 내용을 복사해서 보내주세요."
         alert.addButton(withTitle: "복사하고 닫기")
         alert.addButton(withTitle: "닫기")
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 540, height: 320))
+        textView.isEditable = false
+        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.string = text
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.autoresizingMask = [.width]
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 540, height: 320))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.documentView = textView
+        alert.accessoryView = scroll
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
             NSPasteboard.general.clearContents()

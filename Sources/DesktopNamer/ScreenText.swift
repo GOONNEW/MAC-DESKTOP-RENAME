@@ -58,6 +58,8 @@ enum ScreenText {
         request.recognitionLanguages = ["ko-KR", "en-US"]
         request.usesLanguageCorrection = false
         request.regionOfInterest = regionOfInterest
+        // 라벨(13pt)보다 훨씬 작은 글자는 건너뛰어 속도를 높인다 (관심 영역 높이 대비 비율)
+        request.minimumTextHeight = 0.02
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
         try handler.perform([request])
 
