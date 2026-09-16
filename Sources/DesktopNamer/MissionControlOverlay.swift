@@ -26,6 +26,8 @@ final class MissionControlOverlay {
     private var ocrInFlight = false
     private var nextOCRAt = Date.distantPast
     private var lastImageHash = 0
+    private var ocrStartedAt = Date.distantPast
+    private var dismissedAt = Date.distantPast
 
     // 안전장치
     private var spaceObserver: NSObjectProtocol?
@@ -127,8 +129,9 @@ final class MissionControlOverlay {
         startOCR()
     }
 
-    /// 열려 있을 때는 조금 더 자주, 닫혀 있을 때는 덜 자주 확인한다.
-    private var pollInterval: TimeInterval { isShowing ? 0.5 : 0.7 }
+    /// 이름표가 떠 있을 때는 자주(썸네일 이동을 따라가기 위해), 아닐 때는 덜 자주 확인한다.
+    /// 화면이 그대로면 인식을 건너뛰므로 실제 부담은 작다.
+    private var pollInterval: TimeInterval { isShowing ? 0.3 : 0.5 }
 
     private func startOCR() {
         guard ScreenText.hasScreenCaptureAccess else {
@@ -138,6 +141,7 @@ final class MissionControlOverlay {
         }
         guard let screen = NSScreen.screens.first else { return }
         ocrInFlight = true
+        ocrStartedAt = Date()
         let fraction = captureFraction
         let previousHash = lastImageHash
 
@@ -160,6 +164,10 @@ final class MissionControlOverlay {
     private func finishOCR(_ result: ScreenText.Result?, hash: Int, error: Error?) {
         ocrInFlight = false
         nextOCRAt = Date().addingTimeInterval(pollInterval)
+        if ocrStartedAt < dismissedAt {
+            // 제거 직전에 찍은 화면이므로 무시
+            return
+        }
 
         if let error {
             lastOCRNote = "캡처/인식 실패: \(error.localizedDescription)"
@@ -227,7 +235,7 @@ final class MissionControlOverlay {
         guard new.count == old.count else { return true }
         for (a, b) in zip(new, old) {
             if a.text != b.text { return true }
-            if abs(a.frame.midX - b.frame.midX) > 8 || abs(a.frame.midY - b.frame.midY) > 8 { return true }
+            if abs(a.frame.midX - b.frame.midX) > 3 || abs(a.frame.midY - b.frame.midY) > 3 { return true }
         }
         return false
     }
@@ -237,6 +245,7 @@ final class MissionControlOverlay {
         guard isShowing else { return }
         log("\(reason)으로 이름표 제거")
         hide()
+        dismissedAt = Date()
         nextOCRAt = Date().addingTimeInterval(0.8)
     }
 
@@ -343,7 +352,7 @@ final class MissionControlOverlay {
             height: height
         ))
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.85).cgColor
+        pill.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 1.0).cgColor
         pill.layer?.cornerRadius = height / 2
 
         field.frame = CGRect(x: padding, y: (height - field.frame.height) / 2, width: width - padding * 2, height: field.frame.height)
