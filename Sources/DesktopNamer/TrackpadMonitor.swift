@@ -24,9 +24,9 @@ final class TrackpadMonitor {
     /// 찾아낸 자리 (nil이면 아직 탐색 중)
     private static var layout: (stride: Int, yOffset: Int)?
     private static var probeFrames = 0
-    /// 후보별로 연속으로 맞은 횟수. 충분히 쌓여야 확정한다.
+    /// 후보별 누적 점수(맞으면 +1, 틀리면 -1). 충분히 앞서면 확정한다.
     private static var candidateScores: [Int: Int] = [:]
-    private static let scoreToConfirm = 12
+    private static let scoreToConfirm = 8
 
     // 제스처 상태
     private static var startY: Float?
@@ -40,6 +40,7 @@ final class TrackpadMonitor {
     private(set) static var lastY: Float = -1
     private(set) static var lastRise: Float = 0
     private(set) static var swipeCount = 0
+    private static var badReads = 0
     static var layoutNote: String {
         guard let layout else { return "손가락 위치 탐색 중 (프레임 \(probeFrames)개)" }
         return "구조체 \(layout.stride)바이트, y 위치 \(layout.yOffset)"
@@ -62,16 +63,19 @@ final class TrackpadMonitor {
     /// 후보가 맞는지 본다: 모든 손가락의 x, y가 0~1 안에 들어와야 한다.
     private static func isPlausible(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> Bool {
         var xs: [Float] = []
+        var ys: [Float] = []
         for index in 0..<count {
             let base = index * candidate.stride
             let x = touches.load(fromByteOffset: base + candidate.yOffset - 4, as: Float.self)
             let y = touches.load(fromByteOffset: base + candidate.yOffset, as: Float.self)
-            guard x.isFinite, y.isFinite, x > 0.001, x < 0.999, y > 0.001, y < 0.999 else { return false }
+            // 좌표는 0~1 범위 (가장자리 접촉을 감안해 약간 여유를 둔다)
+            guard x.isFinite, y.isFinite, x >= -0.05, x <= 1.05, y >= -0.05, y <= 1.05 else { return false }
             xs.append(x)
+            ys.append(y)
         }
-        // 손가락들이 가로로 서로 떨어져 있어야 진짜 좌표다 (같은 값이 반복되면 다른 필드를 읽은 것)
-        guard let minX = xs.min(), let maxX = xs.max(), maxX - minX > 0.02 else { return false }
-        return true
+        // 손가락들이 모두 같은 값이면 다른 필드를 읽은 것이다
+        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return false }
+        return (maxX - minX) > 0.005 || (maxY - minY) > 0.005
     }
 
     private static func averageY(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> Float {
@@ -96,17 +100,18 @@ final class TrackpadMonitor {
         // 아직 자리를 못 찾았으면 후보를 점수로 가린다. 손가락이 많을수록 판별력이 높다.
         if layout == nil {
             probeFrames += 1
-            guard count >= 3 else { return 0 }
+            guard count >= 2 else { return 0 }
             for (index, candidate) in candidates.enumerated() {
-                if isPlausible(touches, count: count, candidate: candidate) {
-                    let score = (candidateScores[index] ?? 0) + 1
-                    candidateScores[index] = score
-                    if score >= scoreToConfirm {
-                        layout = candidate
-                        break
-                    }
-                } else {
-                    candidateScores[index] = 0
+                let score = (candidateScores[index] ?? 0)
+                    + (isPlausible(touches, count: count, candidate: candidate) ? 1 : -1)
+                candidateScores[index] = max(-5, min(score, scoreToConfirm))
+            }
+            // 가장 높은 점수가 기준을 넘고 2등과 차이가 나면 확정한다
+            let ranked = candidateScores.sorted { $0.value > $1.value }
+            if let best = ranked.first, best.value >= scoreToConfirm {
+                let second = ranked.dropFirst().first?.value ?? -5
+                if best.value > second || probeFrames > 200 {
+                    layout = candidates[best.key]
                 }
             }
             guard layout != nil else { return 0 }
@@ -121,7 +126,17 @@ final class TrackpadMonitor {
         }
 
         let y = averageY(touches, count: count, candidate: layout)
-        guard y.isFinite, y >= 0, y <= 1 else { return 0 }
+        guard y.isFinite, y >= -0.05, y <= 1.05 else {
+            badReads += 1
+            if badReads > 30 {
+                // 잘못 찾은 자리다. 처음부터 다시 탐색한다.
+                self.layout = nil
+                candidateScores.removeAll()
+                badReads = 0
+            }
+            return 0
+        }
+        badReads = 0
         lastY = y
 
         if startY == nil || count != startCount {
