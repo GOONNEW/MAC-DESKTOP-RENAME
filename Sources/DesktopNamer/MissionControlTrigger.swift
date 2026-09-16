@@ -43,8 +43,11 @@ final class MissionControlTrigger {
             lastNote = "이벤트 탭 생성 실패 (접근성 권한 확인)"
             return false
         }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            lastNote = "런루프 소스 생성 실패"
+            return false
+        }
         self.tap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         self.source = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
