@@ -11,7 +11,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onPrepareBadges: () -> Void
     private let onPreviewBadges: () -> Void
     private let onDiagnose: () -> Void
-    private let onVisibilityTest: () -> Void
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
@@ -20,7 +19,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
          onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
          onPrepareBadges: @escaping () -> Void, onPreviewBadges: @escaping () -> Void,
-         onDiagnose: @escaping () -> Void, onVisibilityTest: @escaping () -> Void) {
+         onDiagnose: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
@@ -29,7 +28,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onPrepareBadges = onPrepareBadges
         self.onPreviewBadges = onPreviewBadges
         self.onDiagnose = onDiagnose
-        self.onVisibilityTest = onVisibilityTest
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -124,9 +122,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         badge.state = settings.badgeEnabled ? .on : .off
         menu.addItem(badge)
 
-        let corner = NSMenuItem(title: "이름 위치", action: nil, keyEquivalent: "")
-        corner.indentationLevel = 1
-        corner.isEnabled = settings.badgeEnabled
+        // 이름 표시 세부 설정은 하위 메뉴 하나로 묶는다
+        let display = NSMenuItem(title: "표시 설정", action: nil, keyEquivalent: "")
+        display.isEnabled = settings.badgeEnabled
+        let displayMenu = NSMenu()
+        displayMenu.autoenablesItems = false
+
+        let cornerItem = NSMenuItem(title: "위치", action: nil, keyEquivalent: "")
         let cornerMenu = NSMenu()
         cornerMenu.autoenablesItems = false
         for value in BadgeManager.Corner.allCases {
@@ -136,12 +138,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             item.state = settings.badgeCorner == value ? .on : .off
             cornerMenu.addItem(item)
         }
-        corner.submenu = cornerMenu
-        menu.addItem(corner)
+        cornerItem.submenu = cornerMenu
+        displayMenu.addItem(cornerItem)
 
-        let size = NSMenuItem(title: "이름 크기", action: nil, keyEquivalent: "")
-        size.indentationLevel = 1
-        size.isEnabled = settings.badgeEnabled
+        let sizeItem = NSMenuItem(title: "크기", action: nil, keyEquivalent: "")
         let sizeMenu = NSMenu()
         sizeMenu.autoenablesItems = false
         for value in BadgeManager.Size.allCases {
@@ -151,58 +151,63 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             item.state = settings.badgeSize == value ? .on : .off
             sizeMenu.addItem(item)
         }
-        size.submenu = sizeMenu
-        menu.addItem(size)
+        sizeItem.submenu = sizeMenu
+        displayMenu.addItem(sizeItem)
 
         if NSScreen.screens.count > 1 {
             let mainOnly = NSMenuItem(title: "주 화면에만 표시", action: #selector(toggleMainScreenOnly(_:)), keyEquivalent: "")
             mainOnly.target = self
             mainOnly.state = settings.badgeMainScreenOnly ? .on : .off
-            mainOnly.indentationLevel = 1
-            mainOnly.isEnabled = settings.badgeEnabled
-            menu.addItem(mainOnly)
+            displayMenu.addItem(mainOnly)
         }
 
-        let prepare = NSMenuItem(title: "모든 데스크탑에 이름 준비", action: #selector(prepareBadges(_:)), keyEquivalent: "")
-        prepare.target = self
-        prepare.indentationLevel = 1
-        prepare.isEnabled = settings.badgeEnabled
-        menu.addItem(prepare)
+        displayMenu.addItem(.separator())
 
-        let preview = NSMenuItem(title: "이름 배지 미리 보기 (5초)", action: #selector(previewBadges(_:)), keyEquivalent: "")
+        let preview = NSMenuItem(title: "지금 이름 보기 (5초)", action: #selector(previewBadges(_:)), keyEquivalent: "")
         preview.target = self
-        preview.indentationLevel = 1
-        preview.isEnabled = settings.badgeEnabled
-        menu.addItem(preview)
+        displayMenu.addItem(preview)
 
-        let overlay = NSMenuItem(title: "실험: 화면을 읽어 라벨 덮어쓰기", action: #selector(toggleOverlay(_:)), keyEquivalent: "")
-        overlay.target = self
-        overlay.state = settings.overlayEnabled ? .on : .off
-        menu.addItem(overlay)
+        let prepare = NSMenuItem(title: "모든 데스크탑에 이름 준비…", action: #selector(prepareBadges(_:)), keyEquivalent: "")
+        prepare.target = self
+        displayMenu.addItem(prepare)
 
-        let always = NSMenuItem(title: "화면 항상 감시 (더 빠름, 화면 기록 표시가 계속 뜸)", action: #selector(toggleAlwaysWatch(_:)), keyEquivalent: "")
-        always.target = self
-        always.state = settings.alwaysWatch ? .on : .off
-        always.isEnabled = settings.overlayEnabled
-        always.indentationLevel = 1
-        menu.addItem(always)
+        display.submenu = displayMenu
+        menu.addItem(display)
+
+        menu.addItem(.separator())
 
         let login = NSMenuItem(title: "로그인 시 자동 실행", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         login.target = self
         login.state = settings.launchAtLogin ? .on : .off
         menu.addItem(login)
 
+        let advanced = NSMenuItem(title: "고급", action: nil, keyEquivalent: "")
+        let advancedMenu = NSMenu()
+        advancedMenu.autoenablesItems = false
+
+        let overlay = NSMenuItem(title: "실험: 화면을 읽어 라벨 덮어쓰기", action: #selector(toggleOverlay(_:)), keyEquivalent: "")
+        overlay.target = self
+        overlay.state = settings.overlayEnabled ? .on : .off
+        advancedMenu.addItem(overlay)
+
+        let always = NSMenuItem(title: "화면 항상 감시 (화면 기록 표시가 계속 뜸)", action: #selector(toggleAlwaysWatch(_:)), keyEquivalent: "")
+        always.target = self
+        always.state = settings.alwaysWatch ? .on : .off
+        always.isEnabled = settings.overlayEnabled
+        advancedMenu.addItem(always)
+
+        advancedMenu.addItem(.separator())
+
         let resetTrust = NSMenuItem(title: "접근성 권한 초기화 후 다시 요청", action: #selector(resetTrust(_:)), keyEquivalent: "")
         resetTrust.target = self
-        menu.addItem(resetTrust)
-
-        let test = NSMenuItem(title: "오버레이 표시 테스트 (15초)", action: #selector(visibilityTest(_:)), keyEquivalent: "")
-        test.target = self
-        menu.addItem(test)
+        advancedMenu.addItem(resetTrust)
 
         let diagnose = NSMenuItem(title: "문제 진단…", action: #selector(diagnose(_:)), keyEquivalent: "")
         diagnose.target = self
-        menu.addItem(diagnose)
+        advancedMenu.addItem(diagnose)
+
+        advanced.submenu = advancedMenu
+        menu.addItem(advanced)
 
         menu.addItem(.separator())
 
@@ -235,10 +240,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         alert.addButton(withTitle: "확인")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
-    }
-
-    @objc private func visibilityTest(_ sender: Any?) {
-        onVisibilityTest()
     }
 
     @objc private func diagnose(_ sender: Any?) {

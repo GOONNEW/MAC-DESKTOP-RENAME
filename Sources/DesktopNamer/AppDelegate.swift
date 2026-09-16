@@ -43,8 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onRenameSpace: { [weak self] space in self?.promptRename(for: space) },
             onPrepareBadges: { [weak self] in self?.prepareBadges() },
             onPreviewBadges: { [weak self] in self?.badges?.preview() },
-            onDiagnose: { [weak self] in self?.showDiagnostics() },
-            onVisibilityTest: { [weak self] in self?.overlay?.runVisibilityTest() }
+            onDiagnose: { [weak self] in self?.showDiagnostics() }
         )
 
         spaceManager.start()

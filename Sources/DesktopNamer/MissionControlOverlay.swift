@@ -237,15 +237,6 @@ final class MissionControlOverlay {
         }
     }
 
-    /// 15초 동안 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
-    func runVisibilityTest() {
-        guard let screen = NSScreen.screens.first else { return }
-        let frame = CGRect(x: screen.frame.midX - 60, y: screen.frame.maxY - 220, width: 120, height: 24)
-        rebuildPanels(with: [Label(number: 0, frame: frame, text: "테스트 이름표")])
-        isShowing = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in self?.hide() }
-    }
-
     // MARK: - 프레임 처리 (스트림 큐)
 
     /// 화면이 움직이다 멈추면(새 프레임이 잠시 안 오면) 마지막 프레임을 인식한다.

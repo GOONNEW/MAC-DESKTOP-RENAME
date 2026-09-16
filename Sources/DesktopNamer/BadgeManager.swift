@@ -171,7 +171,8 @@ final class BadgeManager {
         guard running, space.isActive, !space.isFullscreen, badges[space.uuid] == nil else { return }
         var panels: [NSPanel] = []
         var texts: [NSTextField] = []
-        let targets = mainScreenOnly ? [NSScreen.main ?? NSScreen.screens[0]] : NSScreen.screens
+        // NSScreen.main은 키 창이 있는 화면이라 바뀔 수 있다. 메뉴 막대가 있는 화면(screens[0])으로 고정한다.
+        let targets = mainScreenOnly ? [NSScreen.screens[0]] : NSScreen.screens
         for screen in targets {
             let (panel, field) = makePanel(on: screen, text: names.displayName(for: space))
             panels.append(panel)

@@ -64,7 +64,8 @@ final class AppSettings: ObservableObject {
         badgeEnabled = UserDefaults.standard.object(forKey: Self.badgeKey) as? Bool ?? true
         badgeCorner = (UserDefaults.standard.string(forKey: Self.badgeCornerKey)).flatMap(BadgeManager.Corner.init(rawValue:)) ?? .bottomRight
         badgeSize = (UserDefaults.standard.string(forKey: Self.badgeSizeKey)).flatMap(BadgeManager.Size.init(rawValue:)) ?? .large
-        badgeMainScreenOnly = UserDefaults.standard.bool(forKey: Self.badgeMainOnlyKey)
+        // 보조 모니터는 데스크탑이 하나뿐인 경우가 많아 배지가 쌓인다. 기본은 주 화면만.
+        badgeMainScreenOnly = UserDefaults.standard.object(forKey: Self.badgeMainOnlyKey) as? Bool ?? true
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
