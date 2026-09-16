@@ -1,0 +1,54 @@
+import Foundation
+
+typealias CGSConnectionID = Int32
+typealias CGSSpaceID = UInt64
+
+/// SkyLight(구 CoreGraphics Services)의 비공개 공간(Space) API를 dlsym으로 동적 로드한다.
+/// 링커 플래그 없이 동작하고, 심볼이 없는 macOS에서는 `isAvailable`이 false가 된다.
+enum SkyLight {
+    private typealias MainConnectionFn = @convention(c) () -> CGSConnectionID
+    private typealias CopyManagedDisplaySpacesFn = @convention(c) (CGSConnectionID) -> Unmanaged<CFArray>?
+    private typealias GetActiveSpaceFn = @convention(c) (CGSConnectionID) -> CGSSpaceID
+    private typealias SetCurrentSpaceFn = @convention(c) (CGSConnectionID, CFString, CGSSpaceID) -> Void
+
+    private static let handle: UnsafeMutableRawPointer? = {
+        dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
+    }()
+
+    private static func symbol<T>(_ name: String, as _: T.Type) -> T? {
+        guard let handle, let sym = dlsym(handle, name) else { return nil }
+        return unsafeBitCast(sym, to: T.self)
+    }
+
+    private static let mainConnection = symbol("CGSMainConnectionID", as: MainConnectionFn.self)
+    private static let copyManagedDisplaySpaces = symbol("CGSCopyManagedDisplaySpaces", as: CopyManagedDisplaySpacesFn.self)
+    private static let getActiveSpace = symbol("CGSGetActiveSpace", as: GetActiveSpaceFn.self)
+    private static let setCurrentSpace = symbol("CGSManagedDisplaySetCurrentSpace", as: SetCurrentSpaceFn.self)
+
+    static var isAvailable: Bool {
+        mainConnection != nil && copyManagedDisplaySpaces != nil && getActiveSpace != nil
+    }
+
+    private static var connection: CGSConnectionID? {
+        mainConnection?()
+    }
+
+    /// 디스플레이별 공간 정보. 각 항목은 "Display Identifier", "Current Space", "Spaces" 키를 가진 사전이다.
+    static func managedDisplaySpaces() -> [[String: Any]] {
+        guard let cid = connection, let fn = copyManagedDisplaySpaces,
+              let array = fn(cid)?.takeRetainedValue() else { return [] }
+        return (array as NSArray) as? [[String: Any]] ?? []
+    }
+
+    static func activeSpaceID() -> CGSSpaceID? {
+        guard let cid = connection, let fn = getActiveSpace else { return nil }
+        return fn(cid)
+    }
+
+    @discardableResult
+    static func switchToSpace(_ spaceID: CGSSpaceID, onDisplay displayID: String) -> Bool {
+        guard let cid = connection, let fn = setCurrentSpace else { return false }
+        fn(cid, displayID as CFString, spaceID)
+        return true
+    }
+}
