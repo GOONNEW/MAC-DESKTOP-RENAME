@@ -306,30 +306,60 @@ final class BadgeManager {
     // MARK: - 모든 데스크탑 준비
 
     /// 배지가 없는 데스크탑을 차례로 방문해 배지를 만들고 원래 자리로 돌아온다.
+    /// 전환은 ⌃숫자 단축키로 하므로, 그 단축키가 꺼져 있으면 실패한다. 실패를 감지해 알려 준다.
     func prepareAllBadges(completion: @escaping (String) -> Void) {
-        guard running else { completion("배지 기능이 꺼져 있습니다."); return }
+        guard running else { completion("이름 표시가 꺼져 있습니다. 먼저 켜 주세요."); return }
         let missing = spaces.spaces.filter { !$0.isFullscreen && badges[$0.uuid] == nil }
-        guard !missing.isEmpty else { completion("모든 데스크탑에 배지가 이미 있습니다."); return }
-        let targets = missing.compactMap { space in space.number.flatMap { SpaceSwitcher.canSwitch(to: $0) ? $0 : nil } }
+        guard !missing.isEmpty else { completion("모든 데스크탑에 이름이 준비되어 있습니다."); return }
+
+        let targets = missing.compactMap { space in
+            space.number.flatMap { SpaceSwitcher.canSwitch(to: $0) ? $0 : nil }
+        }
         let origin = spaces.activeSpace?.number
-        guard !targets.isEmpty else { completion("전환할 수 있는 데스크탑이 없습니다 (⌃숫자 단축키는 데스크탑 10까지)."); return }
+        guard !targets.isEmpty else {
+            completion("전환할 수 있는 데스크탑이 없습니다. ⌃숫자 단축키는 데스크탑 10까지만 지원합니다.")
+            return
+        }
 
         var queue = targets
-        func step() {
-            guard let number = queue.first else {
-                if let origin { SpaceSwitcher.switchTo(number: origin) }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-                    let count = self?.badges.count ?? 0
-                    completion("완료: 배지 \(count)개 준비됨")
+        var succeeded: [Int] = []
+        var failed: [Int] = []
+
+        func finish() {
+            if let origin { SpaceSwitcher.switchTo(number: origin) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+                guard let self else { return }
+                let ready = self.spaces.spaces.filter { !$0.isFullscreen && self.badges[$0.uuid] != nil }.count
+                let total = self.spaces.spaces.filter { !$0.isFullscreen }.count
+                var message = "데스크탑 \(total)개 중 \(ready)개에 이름을 준비했습니다."
+                if !failed.isEmpty {
+                    message += "\n\n전환하지 못한 데스크탑: \(failed.map(String.init).joined(separator: ", "))"
+                    message += "\n\n시스템 설정 > 키보드 > 키보드 단축키 > Mission Control에서 \"데스크탑 \(failed[0])(으)로 전환\"이 켜져 있는지 확인해 주세요. 켤 수 없다면, 각 데스크탑으로 직접 이동만 해도 그때 이름이 만들어집니다."
                 }
-                return
+                self.log("준비 완료: 성공 \(succeeded.count), 실패 \(failed.count)")
+                completion(message)
             }
+        }
+
+        func step() {
+            guard let number = queue.first else { finish(); return }
             queue.removeFirst()
             SpaceSwitcher.switchTo(number: number)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
                 guard let self else { return }
                 self.spaces.refresh()
-                if let active = self.spaces.activeSpace { self.ensureBadge(for: active) }
+                // 실제로 그 데스크탑으로 갔는지 확인한다
+                if let active = self.spaces.activeSpace, active.number == number {
+                    self.ensureBadge(for: active)
+                    succeeded.append(number)
+                } else {
+                    failed.append(number)
+                    // 전환이 계속 실패하면 더 시도하지 않는다
+                    if failed.count >= 2 {
+                        failed.append(contentsOf: queue)
+                        queue.removeAll()
+                    }
+                }
                 step()
             }
         }
