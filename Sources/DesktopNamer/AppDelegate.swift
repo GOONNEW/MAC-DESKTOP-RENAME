@@ -26,8 +26,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore, settings: settings)
         overlay = MissionControlOverlay(spaces: spaceManager, names: nameStore)
         badges = BadgeManager(spaces: spaceManager, names: nameStore)
-        signals.onOpenLikely = { [weak self] reason in self?.badges?.show(reason: reason) }
-        signals.onCloseLikely = { [weak self] reason in self?.badges?.hide(reason: reason) }
+        signals.onOpenLikely = { [weak self] reason in
+            self?.badges?.show(reason: reason)
+            self?.overlay?.noteOpenLikely(reason: reason)
+        }
+        signals.onCloseLikely = { [weak self] reason in
+            self?.badges?.hide(reason: reason)
+            self?.overlay?.noteCloseLikely(reason: reason)
+        }
+        signals.start()
         statusBar = StatusBarController(
             spaces: spaceManager,
             names: nameStore,
@@ -35,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onRename: { [weak self] in self?.renameWindow?.show() },
             onRenameSpace: { [weak self] space in self?.promptRename(for: space) },
             onPrepareBadges: { [weak self] in self?.prepareBadges() },
+            onPreviewBadges: { [weak self] in self?.badges?.preview() },
             onDiagnose: { [weak self] in self?.showDiagnostics() },
             onVisibilityTest: { [weak self] in self?.overlay?.runVisibilityTest() }
         )
@@ -51,13 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$badgeEnabled
             .sink { [weak self] enabled in
                 guard let self, let badges = self.badges else { return }
-                if enabled {
-                    badges.start()
-                    self.signals.start()
-                } else {
-                    badges.stop()
-                    if !self.settings.overlayEnabled { self.signals.stop() }
-                }
+                enabled ? badges.start() : badges.stop()
             }
             .store(in: &cancellables)
 
@@ -73,12 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$overlayEnabled
             .sink { [weak self] enabled in
                 guard let self, let overlay = self.overlay else { return }
-                if enabled {
-                    overlay.start()
-                } else {
-                    overlay.stop()
-                    if self.settings.badgeEnabled { self.signals.start() }
-                }
+                _ = self
+                enabled ? overlay.start() : overlay.stop()
             }
             .store(in: &cancellables)
     }

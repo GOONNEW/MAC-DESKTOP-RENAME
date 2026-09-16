@@ -9,6 +9,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onRename: () -> Void
     private let onRenameSpace: (Space) -> Void
     private let onPrepareBadges: () -> Void
+    private let onPreviewBadges: () -> Void
     private let onDiagnose: () -> Void
     private let onVisibilityTest: () -> Void
 
@@ -18,7 +19,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
          onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
-         onPrepareBadges: @escaping () -> Void,
+         onPrepareBadges: @escaping () -> Void, onPreviewBadges: @escaping () -> Void,
          onDiagnose: @escaping () -> Void, onVisibilityTest: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
@@ -26,6 +27,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onRename = onRename
         self.onRenameSpace = onRenameSpace
         self.onPrepareBadges = onPrepareBadges
+        self.onPreviewBadges = onPreviewBadges
         self.onDiagnose = onDiagnose
         self.onVisibilityTest = onVisibilityTest
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -143,6 +145,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         prepare.isEnabled = settings.badgeEnabled
         menu.addItem(prepare)
 
+        let preview = NSMenuItem(title: "이름 배지 미리 보기 (5초)", action: #selector(previewBadges(_:)), keyEquivalent: "")
+        preview.target = self
+        preview.indentationLevel = 1
+        preview.isEnabled = settings.badgeEnabled
+        menu.addItem(preview)
+
         let overlay = NSMenuItem(title: "실험: 화면을 읽어 라벨 덮어쓰기", action: #selector(toggleOverlay(_:)), keyEquivalent: "")
         overlay.target = self
         overlay.state = settings.overlayEnabled ? .on : .off
@@ -225,6 +233,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func prepareBadges(_ sender: Any?) {
         onPrepareBadges()
+    }
+
+    @objc private func previewBadges(_ sender: Any?) {
+        onPreviewBadges()
     }
 
     @objc private func toggleOverlay(_ sender: Any?) {

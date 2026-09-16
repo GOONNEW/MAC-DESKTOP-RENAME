@@ -23,9 +23,9 @@ final class BadgeManager {
     private let spaces: SpaceManager
     private let names: NameStore
 
-    /// 공간 UUID → 배지 창
-    private var badges: [String: NSPanel] = [:]
-    private var fields: [String: NSTextField] = [:]
+    /// 공간 UUID → 화면마다 하나씩인 배지 창들
+    private var badges: [String: [NSPanel]] = [:]
+    private var fields: [String: [NSTextField]] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var running = false
     private(set) var isVisible = false
@@ -80,7 +80,7 @@ final class BadgeManager {
         running = false
         cancellables.removeAll()
         hideTimer?.invalidate()
-        badges.values.forEach { $0.orderOut(nil) }
+        badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
         badges.removeAll()
         fields.removeAll()
         isVisible = false
@@ -112,8 +112,20 @@ final class BadgeManager {
 
     private func setVisible(_ visible: Bool) {
         isVisible = visible
-        for (uuid, panel) in badges {
-            panel.alphaValue = visible && hasName(uuid) ? 1 : 0
+        for (uuid, panels) in badges {
+            let alpha: CGFloat = visible && hasName(uuid) ? 1 : 0
+            panels.forEach { $0.alphaValue = alpha }
+        }
+    }
+
+    /// 5초 동안 배지를 보여 준다 (제대로 뜨는지 눈으로 확인용)
+    func preview() {
+        guard running else { return }
+        hideTimer?.invalidate()
+        setVisible(true)
+        log("미리 보기")
+        hideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            self?.hide(reason: "미리 보기 종료")
         }
     }
 
@@ -126,9 +138,26 @@ final class BadgeManager {
 
     private func ensureBadge(for space: Space) {
         guard running, space.isActive, !space.isFullscreen, badges[space.uuid] == nil else { return }
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        var panels: [NSPanel] = []
+        var texts: [NSTextField] = []
+        for screen in NSScreen.screens {
+            let (panel, field) = makePanel(on: screen, text: names.displayName(for: space))
+            panels.append(panel)
+            texts.append(field)
+        }
+        guard !panels.isEmpty else { return }
+        badges[space.uuid] = panels
+        fields[space.uuid] = texts
+        layout(uuid: space.uuid)
+        if isVisible {
+            let alpha: CGFloat = hasName(space.uuid) ? 1 : 0
+            panels.forEach { $0.alphaValue = alpha }
+        }
+        log("배지 생성: \(space.defaultName) (화면 \(panels.count)개)")
+    }
 
-        let field = NSTextField(labelWithString: names.displayName(for: space))
+    private func makePanel(on screen: NSScreen, text: String) -> (NSPanel, NSTextField) {
+        let field = NSTextField(labelWithString: text)
         field.font = .systemFont(ofSize: fontSize, weight: .heavy)
         field.textColor = .white
         field.alignment = .center
@@ -156,61 +185,59 @@ final class BadgeManager {
         panel.isReleasedWhenClosed = false
         // 창들 위에 떠서 썸네일에서 항상 보이게. 평소엔 투명이라 방해하지 않는다.
         panel.level = .floating
-        // 이 데스크탑에만 속한다 (canJoinAllSpaces 없음). 전체 화면 앱 옆에서도 유지.
+        // 이 데스크탑에만 속한다 (canJoinAllSpaces 없음)
         panel.collectionBehavior = [.ignoresCycle, .fullScreenAuxiliary, .managed]
         panel.contentView = container
         panel.orderFrontRegardless()
-
-        badges[space.uuid] = panel
-        fields[space.uuid] = field
-        layout(uuid: space.uuid)
-        if isVisible { panel.alphaValue = hasName(space.uuid) ? 1 : 0 }
-        log("배지 생성: \(space.defaultName)")
+        return (panel, field)
     }
 
     private func refreshTexts() {
-        for (uuid, field) in fields {
+        for (uuid, texts) in fields {
             guard let space = spaces.spaces.first(where: { $0.uuid == uuid }) else { continue }
-            field.stringValue = names.displayName(for: space)
+            texts.forEach { $0.stringValue = names.displayName(for: space) }
             layout(uuid: uuid)
-            if let panel = badges[uuid] {
-                panel.alphaValue = isVisible && hasName(uuid) ? 1 : 0
-            }
+            let alpha: CGFloat = isVisible && hasName(uuid) ? 1 : 0
+            badges[uuid]?.forEach { $0.alphaValue = alpha }
         }
     }
 
-    /// 글자 크기에 맞춰 배지 크기를 정하고 화면 구석에 놓는다
+    /// 글자 크기에 맞춰 배지 크기를 정하고 각 화면 구석에 놓는다
     private func layout(uuid: String) {
-        guard let panel = badges[uuid], let field = fields[uuid],
-              let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
-        field.sizeToFit()
-        let paddingX: CGFloat = 34
-        let paddingY: CGFloat = 16
-        let maxWidth = screen.frame.width * 0.6
-        let width = min(field.frame.width + paddingX * 2, maxWidth)
-        let height = field.frame.height + paddingY * 2
-        field.frame = CGRect(x: paddingX, y: paddingY, width: width - paddingX * 2, height: field.frame.height)
-        panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        guard let panels = badges[uuid], let texts = fields[uuid] else { return }
+        for (index, panel) in panels.enumerated() {
+            guard index < texts.count else { continue }
+            let field = texts[index]
+            let screen = panel.screen ?? NSScreen.screens[min(index, NSScreen.screens.count - 1)]
+            field.sizeToFit()
+            let paddingX: CGFloat = 34
+            let paddingY: CGFloat = 16
+            let maxWidth = screen.frame.width * 0.6
+            let width = min(field.frame.width + paddingX * 2, maxWidth)
+            let height = field.frame.height + paddingY * 2
+            field.frame = CGRect(x: paddingX, y: paddingY, width: width - paddingX * 2, height: field.frame.height)
+            panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
 
-        let visible = screen.visibleFrame
-        let full = screen.frame
-        var origin = CGPoint.zero
-        switch corner {
-        case .bottomRight:
-            origin = CGPoint(x: full.maxX - margin.width - width, y: full.minY + margin.height)
-        case .bottomLeft:
-            origin = CGPoint(x: full.minX + margin.width, y: full.minY + margin.height)
-        case .topRight:
-            origin = CGPoint(x: full.maxX - margin.width - width, y: visible.maxY - margin.width - height)
-        case .topLeft:
-            origin = CGPoint(x: full.minX + margin.width, y: visible.maxY - margin.width - height)
+            let visible = screen.visibleFrame
+            let full = screen.frame
+            var origin = CGPoint.zero
+            switch corner {
+            case .bottomRight:
+                origin = CGPoint(x: full.maxX - margin.width - width, y: full.minY + margin.height)
+            case .bottomLeft:
+                origin = CGPoint(x: full.minX + margin.width, y: full.minY + margin.height)
+            case .topRight:
+                origin = CGPoint(x: full.maxX - margin.width - width, y: visible.maxY - margin.width - height)
+            case .topLeft:
+                origin = CGPoint(x: full.minX + margin.width, y: visible.maxY - margin.width - height)
+            }
+            panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
         }
-        panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
     }
 
     private func removeBadges(notIn uuids: Set<String>) {
-        for (uuid, panel) in badges where !uuids.contains(uuid) {
-            panel.orderOut(nil)
+        for (uuid, panels) in badges where !uuids.contains(uuid) {
+            panels.forEach { $0.orderOut(nil) }
             badges.removeValue(forKey: uuid)
             fields.removeValue(forKey: uuid)
         }

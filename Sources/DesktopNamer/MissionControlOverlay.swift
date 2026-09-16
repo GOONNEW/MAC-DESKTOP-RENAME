@@ -25,9 +25,6 @@ final class MissionControlOverlay {
     private let names: NameStore
 
     private let stream = ScreenStream()
-    private let trigger = MissionControlTrigger()
-    private let trackpad = TrackpadMonitor()
-    private var trackpadWorks = false
     private var strip: ScreenText.Strip?
     private var running = false
     private var housekeeping: Timer?
@@ -80,10 +77,6 @@ final class MissionControlOverlay {
 
     private var dismissedAt = Date.distantPast
 
-    // 안전장치
-    private var spaceObserver: NSObjectProtocol?
-    private var appObserver: NSObjectProtocol?
-    private var inputMonitors: [Any] = []
 
     // 진단 정보
     private var frameCount = 0
@@ -126,41 +119,21 @@ final class MissionControlOverlay {
             }
         }
 
-        // 트랙패드 손가락 개수 (세 손가락 이상일 때만 감시 시작)
-        TrackpadMonitor.onTouchCountChanged = { [weak self] count in
-            if count >= 3 { self?.wake(reason: "트랙패드 \(count)손가락") }
-        }
-        trackpadWorks = trackpad.startMonitoring()
-        if !trackpadWorks { log("트랙패드 감시 실패: \(trackpad.note) → 제스처 이벤트로 대체") }
-
-        // 키보드 (트랙패드 감시가 안 되면 제스처 이벤트도 포함)
-        trigger.onTrigger = { [weak self] reason in self?.wake(reason: reason) }
-        if !trigger.start(includeGestures: !trackpadWorks) {
-            log("동작 감지 시작 실패: \(trigger.lastNote)")
-        }
-
         housekeeping = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.housekeep()
         }
         applyWatchMode()
 
-        // 데스크탑/앱 전환은 Mission Control이 닫혔다는 뜻이므로 바로 지운다
-        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.dismiss(reason: "데스크탑 전환")
-        }
-        appObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.dismiss(reason: "앱 전환")
-        }
-        // Mission Control 안에서의 클릭이나 키 입력은 거의 항상 닫는 동작이다
-        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown], handler: { [weak self] event in
-            let reason = event.type == .keyDown ? "키 입력" : "클릭"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.dismiss(reason: reason) }
-        })
-        if let monitor { inputMonitors.append(monitor) }
+    }
+
+    /// 밖에서 Mission Control이 열릴 것 같다고 알려줄 때
+    func noteOpenLikely(reason: String) {
+        wake(reason: reason)
+    }
+
+    /// 밖에서 닫힌 것 같다고 알려줄 때
+    func noteCloseLikely(reason: String) {
+        dismiss(reason: reason)
     }
 
     func stop() {
@@ -169,19 +142,7 @@ final class MissionControlOverlay {
         housekeeping = nil
         settleTimer?.cancel()
         settleTimer = nil
-        trigger.stop()
-        trackpad.stopMonitoring()
         stream.stop()
-        if let spaceObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
-            self.spaceObserver = nil
-        }
-        if let appObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(appObserver)
-            self.appObserver = nil
-        }
-        inputMonitors.forEach { NSEvent.removeMonitor($0) }
-        inputMonitors.removeAll()
         hide()
         anchorWindow?.orderOut(nil)
         anchorWindow = nil
@@ -564,7 +525,7 @@ final class MissionControlOverlay {
         lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
         lines.append("오버레이 실행 중: \(running ? "예" : "아니오"), 감시 모드: \(alwaysWatch ? "항상" : "동작 감지 시"), 화면 스트림: \(stream.isRunning ? "동작" : "정지")")
-        lines.append("동작 감지: 트랙패드 \(trackpad.note) / 키보드 \(trigger.lastNote), 마지막 감지: \(lastTriggerNote)")
+        lines.append("마지막 감지: \(lastTriggerNote)")
         lines.append("캡처 제외: \(stream.excludedNote)")
         lines.append("기억한 라벨 줄 높이: \(knownRows.map { String(Int($0)) }.joined(separator: ", "))")
         lines.append("글자 인식: \(lastOCRNote)")
