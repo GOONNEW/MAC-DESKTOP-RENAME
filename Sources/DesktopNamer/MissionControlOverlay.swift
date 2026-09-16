@@ -36,6 +36,8 @@ final class MissionControlOverlay {
     private var lastLabelNote = ""
     private var axNote = ""
     private var testMode = false
+    private var events: [String] = []
+    private var spaceObserver: NSObjectProtocol?
 
     init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
@@ -57,12 +59,33 @@ final class MissionControlOverlay {
             self?.tick()
         }
         timer?.tolerance = 0.05
+
+        // 데스크탑이 바뀌면 Mission Control은 닫힌 것이므로 무조건 지운다 (안전장치)
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isShowing else { return }
+            self.log("데스크탑 전환으로 이름표 제거")
+            self.hide()
+            self.wasOpen = false
+        }
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        if let spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+            self.spaceObserver = nil
+        }
         hide()
+    }
+
+    private func log(_ message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.S"
+        events.append("\(formatter.string(from: Date())) \(message)")
+        if events.count > 20 { events.removeFirst(events.count - 20) }
     }
 
     /// 15초 동안 Mission Control이 열리면 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
@@ -82,6 +105,7 @@ final class MissionControlOverlay {
 
         if !open {
             if wasOpen {
+                log("닫힘 감지 (Dock 창: \(Self.describeDockWindows()))")
                 hide()
                 ocrAttempts = 0
                 ocrInFlight = false
@@ -95,6 +119,7 @@ final class MissionControlOverlay {
             openedAt = Date()
             lastOpenAt = openedAt
             openCount += 1
+            log("열림 감지 (Dock 창: \(Self.describeDockWindows()))")
             ocrAttempts = 0
             nextOCRAt = Date().addingTimeInterval(0.35) // 열리는 애니메이션이 끝날 때까지 대기
             axNote = DockAccessibility.scan().note
@@ -166,6 +191,14 @@ final class MissionControlOverlay {
         rebuildPanels(with: labels)
         currentLabels = labels
         isShowing = true
+        log("이름표 \(labels.count)개 표시")
+    }
+
+    private static func describeDockWindows() -> String {
+        let windows = DockAccessibility.dockWindows()
+        guard !windows.isEmpty else { return "없음" }
+        return windows.map { "\($0.name.isEmpty ? "(이름 없음)" : $0.name) \(Int($0.frame.width))×\(Int($0.frame.height)) layer \($0.layer)" }
+            .joined(separator: ", ")
     }
 
     // MARK: - 진단
@@ -184,7 +217,12 @@ final class MissionControlOverlay {
             lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))
         }
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
-        if !axNote.isEmpty { lines.append("Dock 접근성 검사: \(axNote)") }
+        lines.append("지금 Dock 창: \(Self.describeDockWindows())")
+        lines.append("지금 열림 판정: \(DockAccessibility.isMissionControlLikelyOpen() ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
+        if !events.isEmpty {
+            lines.append("기록:")
+            lines.append(contentsOf: events.map { "  " + $0 })
+        }
         lines.append("이름 저장 목록: \(names.names.isEmpty ? "없음" : names.names.values.joined(separator: ", "))")
         lines.append("공간 목록: " + spaces.spaces.map { $0.number.map { String($0) } ?? "전체화면" }.joined(separator: ", "))
         lines.append("화면: " + NSScreen.screens.map { "\(Int($0.frame.width))×\(Int($0.frame.height)) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY))) 배율 \($0.backingScaleFactor)" }.joined(separator: " / "))
