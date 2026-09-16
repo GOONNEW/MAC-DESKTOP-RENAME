@@ -47,6 +47,9 @@ final class MissionControlOverlay {
     private var lastServerSignature = ""
     private var lastStatusNote = ""
     private var menuBarWasHidden = false
+    /// 시스템 Menubar 창을 한 번이라도 본 적이 있어야 "사라짐" 신호를 믿는다
+    private var menuBarWindowSeen = false
+    private var lastSignalKey = ""
     private var spaceObserver: NSObjectProtocol?
     private var appObserver: NSObjectProtocol?
     private var inputMonitors: [Any] = []
@@ -172,12 +175,25 @@ final class MissionControlOverlay {
             lastStatusNote = statusNote
             log("메뉴 막대 아이콘 창: \(statusNote)")
         }
-        let menuBarHidden = !DockAccessibility.isMenuBarVisible() || Self.isStatusWindowOccluded()
+        let menuBarVisible = DockAccessibility.isMenuBarVisible()
+        if menuBarVisible { menuBarWindowSeen = true }
+        let menuBarHidden = (menuBarWindowSeen && !menuBarVisible) || Self.isStatusWindowOccluded()
         if menuBarHidden != menuBarWasHidden {
             menuBarWasHidden = menuBarHidden
             log(menuBarHidden ? "메뉴 막대 사라짐" : "메뉴 막대 다시 보임")
         }
         let open = wsOpen || dockFront || menuBarHidden
+
+        // 어떤 신호든 바뀌면 새 상태로 보고 인식을 다시 시도할 수 있게 한다
+        let signalKey = "\(wsOpen)/\(dockFront)/\(menuBarHidden)"
+        if signalKey != lastSignalKey {
+            lastSignalKey = signalKey
+            if !isShowing {
+                wasOpen = false
+                suppressUntilClosed = false
+                ocrAttempts = 0
+            }
+        }
 
         if !open {
             if wasOpen {
