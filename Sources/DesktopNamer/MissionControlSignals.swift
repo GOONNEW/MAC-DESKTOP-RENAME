@@ -32,8 +32,8 @@ final class MissionControlSignals {
         guard !isRunning else { return }
         isRunning = true
 
-        TrackpadMonitor.onTouchCountChanged = { [weak self] count in
-            if count >= 3 { self?.open("트랙패드 \(count)손가락") }
+        TrackpadMonitor.onSwipeUp = { [weak self] count in
+            self?.open("트랙패드 \(count)손가락 위로 쓸기")
         }
         trackpadWorks = trackpad.startMonitoring()
 
