@@ -8,6 +8,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let settings: AppSettings
     private let onRename: () -> Void
     private let onRenameSpace: (Space) -> Void
+    private let onPrepareBadges: () -> Void
     private let onDiagnose: () -> Void
     private let onVisibilityTest: () -> Void
 
@@ -17,12 +18,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
          onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
+         onPrepareBadges: @escaping () -> Void,
          onDiagnose: @escaping () -> Void, onVisibilityTest: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
         self.onRename = onRename
         self.onRenameSpace = onRenameSpace
+        self.onPrepareBadges = onPrepareBadges
         self.onDiagnose = onDiagnose
         self.onVisibilityTest = onVisibilityTest
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -114,7 +117,33 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         rename.submenu = renameMenu
         menu.addItem(rename)
 
-        let overlay = NSMenuItem(title: "Mission Control에 이름 겹쳐 보이기", action: #selector(toggleOverlay(_:)), keyEquivalent: "")
+        let badge = NSMenuItem(title: "Mission Control에 이름 표시", action: #selector(toggleBadge(_:)), keyEquivalent: "")
+        badge.target = self
+        badge.state = settings.badgeEnabled ? .on : .off
+        menu.addItem(badge)
+
+        let corner = NSMenuItem(title: "이름 위치", action: nil, keyEquivalent: "")
+        corner.indentationLevel = 1
+        corner.isEnabled = settings.badgeEnabled
+        let cornerMenu = NSMenu()
+        cornerMenu.autoenablesItems = false
+        for value in BadgeManager.Corner.allCases {
+            let item = NSMenuItem(title: value.title, action: #selector(setCorner(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = value.rawValue
+            item.state = settings.badgeCorner == value ? .on : .off
+            cornerMenu.addItem(item)
+        }
+        corner.submenu = cornerMenu
+        menu.addItem(corner)
+
+        let prepare = NSMenuItem(title: "모든 데스크탑에 이름 준비", action: #selector(prepareBadges(_:)), keyEquivalent: "")
+        prepare.target = self
+        prepare.indentationLevel = 1
+        prepare.isEnabled = settings.badgeEnabled
+        menu.addItem(prepare)
+
+        let overlay = NSMenuItem(title: "실험: 화면을 읽어 라벨 덮어쓰기", action: #selector(toggleOverlay(_:)), keyEquivalent: "")
         overlay.target = self
         overlay.state = settings.overlayEnabled ? .on : .off
         menu.addItem(overlay)
@@ -182,6 +211,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func diagnose(_ sender: Any?) {
         onDiagnose()
+    }
+
+    @objc private func toggleBadge(_ sender: Any?) {
+        settings.badgeEnabled.toggle()
+    }
+
+    @objc private func setCorner(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let corner = BadgeManager.Corner(rawValue: raw) else { return }
+        settings.badgeCorner = corner
+    }
+
+    @objc private func prepareBadges(_ sender: Any?) {
+        onPrepareBadges()
     }
 
     @objc private func toggleOverlay(_ sender: Any?) {

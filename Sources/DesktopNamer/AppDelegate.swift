@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var renameWindow: RenameWindowController?
     private var overlay: MissionControlOverlay?
+    private var badges: BadgeManager?
+    private let signals = MissionControlSignals()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -23,12 +25,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore, settings: settings)
         overlay = MissionControlOverlay(spaces: spaceManager, names: nameStore)
+        badges = BadgeManager(spaces: spaceManager, names: nameStore)
+        signals.onOpenLikely = { [weak self] reason in self?.badges?.show(reason: reason) }
+        signals.onCloseLikely = { [weak self] reason in self?.badges?.hide(reason: reason) }
         statusBar = StatusBarController(
             spaces: spaceManager,
             names: nameStore,
             settings: settings,
             onRename: { [weak self] in self?.renameWindow?.show() },
             onRenameSpace: { [weak self] space in self?.promptRename(for: space) },
+            onPrepareBadges: { [weak self] in self?.prepareBadges() },
             onDiagnose: { [weak self] in self?.showDiagnostics() },
             onVisibilityTest: { [weak self] in self?.overlay?.runVisibilityTest() }
         )
@@ -42,6 +48,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] uuids in self?.nameStore.prune(keeping: uuids) }
             .store(in: &cancellables)
 
+        settings.$badgeEnabled
+            .sink { [weak self] enabled in
+                guard let self, let badges = self.badges else { return }
+                if enabled {
+                    badges.start()
+                    self.signals.start()
+                } else {
+                    badges.stop()
+                    if !self.settings.overlayEnabled { self.signals.stop() }
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.$badgeCorner
+            .sink { [weak self] corner in self?.badges?.corner = corner }
+            .store(in: &cancellables)
+
         settings.$alwaysWatch
             .sink { [weak self] always in self?.overlay?.alwaysWatch = always }
             .store(in: &cancellables)
@@ -49,10 +72,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 오버레이 설정 반영
         settings.$overlayEnabled
             .sink { [weak self] enabled in
-                guard let overlay = self?.overlay else { return }
-                enabled ? overlay.start() : overlay.stop()
+                guard let self, let overlay = self.overlay else { return }
+                if enabled {
+                    overlay.start()
+                } else {
+                    overlay.stop()
+                    if self.settings.badgeEnabled { self.signals.start() }
+                }
             }
             .store(in: &cancellables)
+    }
+
+    /// 배지가 없는 데스크탑을 돌며 배지를 만든다
+    private func prepareBadges() {
+        guard let badges else { return }
+        badges.prepareAllBadges { message in
+            let alert = NSAlert()
+            alert.messageText = "모든 데스크탑에 배지 준비"
+            alert.informativeText = message
+            alert.addButton(withTitle: "확인")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
     }
 
     /// 데스크탑 하나의 이름을 묻는 작은 입력 창
@@ -78,7 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 진단 정보를 보여주고 클립보드로 복사할 수 있게 한다.
     private func showDiagnostics() {
         guard let overlay else { return }
-        let text = overlay.diagnostics()
+        var text = badges?.diagnostics() ?? ""
+        text += "\nMission Control 동작 감지: \(signals.note), 마지막: \(signals.lastOpenNote)\n\n"
+        text += overlay.diagnostics()
         let alert = NSAlert()
         alert.messageText = "문제 진단"
         alert.informativeText = "아래 내용을 복사해서 보내주세요."
@@ -107,6 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         overlay?.stop()
+        badges?.stop()
+        signals.stop()
         spaceManager.stop()
     }
 }
