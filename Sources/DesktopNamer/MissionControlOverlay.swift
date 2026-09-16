@@ -187,11 +187,19 @@ final class MissionControlOverlay {
             spaces.spaces.compactMap { space in space.number.map { ($0, space) } },
             uniquingKeysWith: { first, _ in first }
         )
+        // 라벨 줄의 세로 중심은 줄 전체의 중앙값으로 통일한다 (인식 오차로 들쭉날쭉해지는 것 방지)
+        let midYs = result.labels.map(\.frame.midY).sorted()
+        let rowMidY = midYs[midYs.count / 2]
+        let labelFont = NSFont.systemFont(ofSize: 13)
+
         var labels: [Label] = []
         for found in result.labels {
             guard let space = byNumber[found.number], let custom = names.customName(for: space) else { continue }
-            // 원래 글자를 완전히 덮도록 조금 넓게
-            let frame = found.frame.insetBy(dx: -10, dy: -5)
+            // 인식된 영역은 실제 글자보다 좁을 때가 있으므로, 원래 라벨 폭을 글꼴로 직접 계산해 넉넉히 덮는다
+            let originalWidth = (found.text as NSString).size(withAttributes: [.font: labelFont]).width
+            let width = max(found.frame.width, originalWidth) + 32
+            let height: CGFloat = 24
+            let frame = CGRect(x: found.frame.midX - width / 2, y: rowMidY - height / 2, width: width, height: height)
             labels.append(Label(frame: frame, text: custom))
         }
         lastLabelNote = labels.isEmpty
@@ -207,11 +215,21 @@ final class MissionControlOverlay {
             if isShowing { hide() }
             return
         }
-        if !isShowing || labels != currentLabels {
+        // 이미 표시 중이면 개수가 바뀌거나 8pt 넘게 움직였을 때만 다시 그린다 (미세한 흔들림 방지)
+        if !isShowing || Self.changedNoticeably(labels, currentLabels) {
             rebuildPanels(with: labels)
             currentLabels = labels
         }
         isShowing = true
+    }
+
+    private static func changedNoticeably(_ new: [Label], _ old: [Label]) -> Bool {
+        guard new.count == old.count else { return true }
+        for (a, b) in zip(new, old) {
+            if a.text != b.text { return true }
+            if abs(a.frame.midX - b.frame.midX) > 8 || abs(a.frame.midY - b.frame.midY) > 8 { return true }
+        }
+        return false
     }
 
     /// 이름표를 지우고, 닫히는 애니메이션 동안 다시 그리지 않도록 다음 확인을 잠깐 미룬다.
