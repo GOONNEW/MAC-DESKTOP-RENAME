@@ -115,16 +115,35 @@ enum DockAccessibility {
             }
         }
         let note = notes.isEmpty ? "mc 그룹 \(groups.count)개, 버튼 \(buttons.count)개" : notes.joined(separator: "; ")
-        var tree = ""
-        if buttons.isEmpty {
-            var lines: [String] = []
-            for group in groups {
-                dump(group, depth: 0, maxDepth: 6, into: &lines)
-                if lines.count > 120 { break }
-            }
-            tree = lines.prefix(120).joined(separator: "\n")
+        var lines: [String] = []
+        for group in groups {
+            dump(group, depth: 0, maxDepth: 6, into: &lines)
+            if lines.count > 120 { break }
         }
+        let tree = lines.prefix(120).joined(separator: "\n")
         return Scan(buttons: buttons, note: note, tree: tree)
+    }
+
+    /// Dock이 화면에 띄운 창 목록. Mission Control이 열리면 화면 크기의 Dock 창이 생기므로 감지 신호로 쓴다.
+    static func dockWindows() -> [(name: String, frame: CGRect, layer: Int)] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        return list.compactMap { info in
+            guard (info[kCGWindowOwnerName as String] as? String) == "Dock",
+                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { return nil }
+            let name = info[kCGWindowName as String] as? String ?? ""
+            let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+            return (name, bounds, layer)
+        }
+    }
+
+    /// 화면을 거의 다 덮는 Dock 창이 있으면 Mission Control이 열린 것으로 본다.
+    static func isMissionControlLikelyOpen() -> Bool {
+        guard let screen = NSScreen.screens.first else { return false }
+        let minArea = screen.frame.width * screen.frame.height * 0.8
+        return dockWindows().contains { $0.frame.width * $0.frame.height >= minArea }
     }
 
     /// 접근성 요소의 역할/식별자/설명/위치를 들여쓰기로 기록한다.

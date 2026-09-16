@@ -22,6 +22,10 @@ final class MissionControlOverlay {
     private var lastLabelNote = ""
     private var tickCount = 0
     private var lastTree = ""
+    private var bestTreeLines = 0
+    private var mcOpenTicks = 0
+    private var mcOpenWithChildrenTicks = 0
+    private var lastDockWindows = ""
 
     /// 버튼 프레임 바닥에서 라벨 중심까지의 거리. Mission Control의 라벨 위치에 맞춰 조정한다.
     private let labelBottomInset: CGFloat = 12
@@ -65,10 +69,21 @@ final class MissionControlOverlay {
             if isShowing { hide() }
             return
         }
-        lastDetection = Date()
+        let treeLines = scan.tree.split(separator: "\n").count
+        if treeLines > bestTreeLines {
+            bestTreeLines = treeLines
+            lastTree = scan.tree
+        }
+        if DockAccessibility.isMissionControlLikelyOpen() {
+            mcOpenTicks += 1
+            if treeLines > 1 { mcOpenWithChildrenTicks += 1 }
+            lastDetection = Date()
+            lastDockWindows = DockAccessibility.dockWindows()
+                .map { "\($0.name.isEmpty ? "(이름 없음)" : $0.name) \(Int($0.frame.width))×\(Int($0.frame.height)) layer \($0.layer)" }
+                .joined(separator: " / ")
+        }
         lastScanNote = scan.note
-        lastButtons = buttons
-        if !scan.tree.isEmpty { lastTree = scan.tree }
+        if !buttons.isEmpty { lastButtons = buttons }
         show(buttons)
     }
 
@@ -92,8 +107,12 @@ final class MissionControlOverlay {
             }
         }
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
+        lines.append("Dock 전체 화면 창으로 본 Mission Control 열림: \(mcOpenTicks)회, 그중 mc 그룹에 내용이 있던 때: \(mcOpenWithChildrenTicks)회")
+        if !lastDockWindows.isEmpty {
+            lines.append("열렸을 때 Dock 창: \(lastDockWindows)")
+        }
         if !lastTree.isEmpty {
-            lines.append("Mission Control 내부 구조:")
+            lines.append("Mission Control 내부 구조 (가장 내용이 많았던 순간, \(bestTreeLines)줄):")
             lines.append(lastTree)
         }
         lines.append("이름 저장 목록: \(names.names.isEmpty ? "없음" : names.names.values.joined(separator: ", "))")
