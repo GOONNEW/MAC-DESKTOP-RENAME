@@ -18,15 +18,21 @@ final class TrackpadMonitor {
     static var onSwipeUp: ((Int) -> Void)?
 
     /// 시험해 볼 (구조체 크기, y 위치) 후보들
-    private static let candidates: [(stride: Int, yOffset: Int)] = [
-        (112, 36), (112, 32), (108, 32), (104, 32), (96, 32), (120, 36), (128, 40), (144, 40),
-    ]
+    private static let candidates: [(stride: Int, yOffset: Int)] = {
+        var list: [(stride: Int, yOffset: Int)] = []
+        for stride in [96, 100, 104, 108, 112, 116, 120, 124, 128, 136, 144] {
+            for yOffset in [28, 32, 36, 40, 44] where yOffset + 4 <= stride {
+                list.append((stride, yOffset))
+            }
+        }
+        return list
+    }()
     /// 찾아낸 자리 (nil이면 아직 탐색 중)
     private static var layout: (stride: Int, yOffset: Int)?
     private static var probeFrames = 0
     /// 후보별 누적 점수(맞으면 +1, 틀리면 -1). 충분히 앞서면 확정한다.
     private static var candidateScores: [Int: Int] = [:]
-    private static let scoreToConfirm = 8
+    private static let scoreToConfirm = 20
 
     // 제스처 상태
     private static var startY: Float?
@@ -43,13 +49,12 @@ final class TrackpadMonitor {
     private static var badReads = 0
     /// 탐색 중 후보별로 관찰한 y 값들 (실제로 움직였는지 보기 위함)
     private static var probeHistory: [Int: [Float]] = [:]
-    private static var lastLayoutNote = ""
-
     static var layoutNote: String {
         guard let layout else {
-            let best = candidateScores.max(by: { $0.value < $1.value })
-            let detail = best.map { "최고 후보 \(candidates[$0.key].stride)바이트 점수 \($0.value)" } ?? "후보 없음"
-            return "손가락 위치 탐색 중 (프레임 \(probeFrames)개, \(detail))"
+            let ranked = candidateScores.sorted { $0.value > $1.value }.prefix(3)
+            let detail = ranked.isEmpty ? "일치하는 후보 없음"
+                : ranked.map { "\(candidates[$0.key].stride)/\(candidates[$0.key].yOffset)=\($0.value)" }.joined(separator: " ")
+            return "손가락 위치 탐색 중 (프레임 \(probeFrames)개, 상위 후보 \(detail))"
         }
         return "구조체 \(layout.stride)바이트, y 위치 \(layout.yOffset)"
     }
@@ -78,22 +83,24 @@ final class TrackpadMonitor {
     private static let start = symbol("MTDeviceStart", as: StartFn.self)
     private static let stop = symbol("MTDeviceStop", as: StopFn.self)
 
-    /// 후보가 맞는지 본다: 모든 손가락의 x, y가 0~1 안에 들어와야 한다.
+    /// 후보가 맞는지 본다.
+    /// MTTouch는 [frame(Int32), timestamp(Double), identifier(Int32), state(Int32), ...] 순서이고
+    /// identifier는 1부터 차례로 붙는다. 이 값이 손가락 개수와 맞아떨어지는 후보가 진짜다.
     private static func isPlausible(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> Bool {
-        var xs: [Float] = []
-        var ys: [Float] = []
+        var identifiers: Set<Int32> = []
         for index in 0..<count {
             let base = index * candidate.stride
+            // identifier는 y 좌표보다 앞쪽에 있다 (정규화 좌표 직전 16바이트)
+            let identifier = touches.load(fromByteOffset: base + candidate.yOffset - 20, as: Int32.self)
+            guard identifier >= 1, identifier <= 20 else { return false }
+            identifiers.insert(identifier)
+
             let x = touches.load(fromByteOffset: base + candidate.yOffset - 4, as: Float.self)
             let y = touches.load(fromByteOffset: base + candidate.yOffset, as: Float.self)
-            // 좌표는 0~1 범위 (가장자리 접촉을 감안해 약간 여유를 둔다)
             guard x.isFinite, y.isFinite, x >= -0.05, x <= 1.05, y >= -0.05, y <= 1.05 else { return false }
-            xs.append(x)
-            ys.append(y)
         }
-        // 손가락들이 모두 같은 값이면 다른 필드를 읽은 것이다
-        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return false }
-        return (maxX - minX) > 0.005 || (maxY - minY) > 0.005
+        // 손가락마다 서로 다른 식별자를 가져야 한다
+        return identifiers.count == count
     }
 
     private static func averageY(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> Float {
@@ -134,14 +141,21 @@ final class TrackpadMonitor {
                 history.append(y)
                 if history.count > 40 { history.removeFirst() }
                 probeHistory[index] = history
-                // 손가락이 위아래로 실제 움직인 폭이 있어야 진짜 좌표다
-                if let low = history.min(), let high = history.max(), high - low > 0.03 {
-                    candidateScores[index] = (candidateScores[index] ?? 0) + 2
+                // 식별자까지 맞으면 유력 후보. 움직임 폭이 확인되면 더 가점.
+                var gain = 1
+                if let low = history.min(), let high = history.max(), high - low > 0.02 {
+                    gain = 4
                 }
+                candidateScores[index] = (candidateScores[index] ?? 0) + gain
             }
-            if let best = candidateScores.max(by: { $0.value < $1.value }), best.value >= scoreToConfirm {
-                layout = candidates[best.key]
-                probeHistory.removeAll()
+            let ranked = candidateScores.sorted { $0.value > $1.value }
+            if let best = ranked.first, best.value >= scoreToConfirm {
+                // 2등과 확실히 차이가 나야 채택한다
+                let second = ranked.dropFirst().first?.value ?? 0
+                if best.value >= second * 2 || best.value - second >= 10 {
+                    layout = candidates[best.key]
+                    probeHistory.removeAll()
+                }
             }
             guard layout != nil else { return 0 }
         }
@@ -167,7 +181,6 @@ final class TrackpadMonitor {
         }
         badReads = 0
         lastY = y
-        lastLayoutNote = "\(found.stride)/\(found.yOffset)"
 
         if startY == nil || count != startCount {
             startY = y
