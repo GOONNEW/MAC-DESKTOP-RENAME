@@ -78,6 +78,21 @@ enum ScreenText {
             )
             labels.append(Label(number: number, frame: frame, text: text))
         }
-        return Result(labels: labels, allText: allText)
+        return Result(labels: filterAlignedRow(labels), allText: allText)
+    }
+
+    /// Mission Control 라벨은 같은 높이에 나란히 놓인다. 같은 높이(±8pt)에 2개 이상 모인 그룹 중 가장 큰 것만 남긴다.
+    /// 채팅 글 등 화면 다른 곳의 "데스크탑 N" 글자를 걸러낸다.
+    private static func filterAlignedRow(_ labels: [Label]) -> [Label] {
+        guard labels.count >= 2 else { return [] }
+        var best: [Label] = []
+        for anchor in labels {
+            let row = labels.filter { abs($0.frame.midY - anchor.frame.midY) <= 8 }
+            if row.count > best.count { best = row }
+        }
+        guard best.count >= 2 else { return [] }
+        // 같은 번호가 여러 개면 첫 것만
+        var seen = Set<Int>()
+        return best.sorted { $0.frame.minX < $1.frame.minX }.filter { seen.insert($0.number).inserted }
     }
 }

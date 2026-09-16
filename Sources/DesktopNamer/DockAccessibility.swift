@@ -166,11 +166,19 @@ enum DockAccessibility {
         }
     }
 
-    /// 화면을 거의 다 덮는 Dock 창이 있으면 Mission Control이 열린 것으로 본다.
+    /// 화면을 거의 다 덮는 Dock 창이 있으면 true. (일부 macOS는 Mission Control이 닫혀도 이런 창을 유지하므로 단독 판정에는 쓰지 않는다)
     static func isMissionControlLikelyOpen() -> Bool {
         guard let screen = NSScreen.screens.first else { return false }
         let minArea = screen.frame.width * screen.frame.height * 0.8
         return dockWindows().contains { $0.frame.width * $0.frame.height >= minArea }
+    }
+
+    /// Dock 창 목록을 비교 가능한 문자열로 만든다. Mission Control이 열리면 이 값이 평소와 달라진다.
+    static func dockWindowSignature() -> String {
+        dockWindows()
+            .map { "\(Int($0.frame.width))x\(Int($0.frame.height))@\(Int($0.frame.minX)),\(Int($0.frame.minY))/L\($0.layer)/\($0.name)" }
+            .sorted()
+            .joined(separator: " | ")
     }
 
     /// 접근성 요소의 역할/식별자/설명/위치를 들여쓰기로 기록한다.

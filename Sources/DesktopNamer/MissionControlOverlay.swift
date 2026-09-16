@@ -39,6 +39,9 @@ final class MissionControlOverlay {
     private var events: [String] = []
     /// 데스크탑 전환으로 지운 뒤, 닫힘이 한 번 감지될 때까지 다시 그리지 않는다
     private var suppressUntilClosed = false
+    /// Mission Control이 닫혀 있을 때의 Dock 창 목록. 이것과 다르면 열린 것으로 본다.
+    private var baselineSignature = ""
+    private var lastSignature = ""
     private var spaceObserver: NSObjectProtocol?
     private var appObserver: NSObjectProtocol?
     private var inputMonitors: [Any] = []
@@ -59,6 +62,7 @@ final class MissionControlOverlay {
         if !ScreenText.hasScreenCaptureAccess {
             ScreenText.requestScreenCaptureAccess()
         }
+        refreshBaseline(reason: "시작")
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -69,11 +73,13 @@ final class MissionControlOverlay {
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.dismiss(reason: "데스크탑 전환")
+            self?.scheduleBaselineRefresh(reason: "데스크탑 전환")
         }
         appObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.dismiss(reason: "앱 전환")
+            self?.scheduleBaselineRefresh(reason: "앱 전환")
         }
         // Mission Control 안에서의 클릭이나 키 입력은 거의 항상 닫는 동작이다
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown], handler: { [weak self] event in
@@ -81,6 +87,23 @@ final class MissionControlOverlay {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.dismiss(reason: reason) }
         })
         if let monitor { inputMonitors.append(monitor) }
+    }
+
+    /// Mission Control이 닫혀 있다고 확신할 수 있는 순간(앱/데스크탑 전환 직후)에 평소 상태를 다시 기억한다.
+    private func scheduleBaselineRefresh(reason: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.refreshBaseline(reason: reason)
+        }
+    }
+
+    private func refreshBaseline(reason: String) {
+        let signature = DockAccessibility.dockWindowSignature()
+        if signature != baselineSignature {
+            baselineSignature = signature
+            log("평소 상태 기억 (\(reason)): \(signature.isEmpty ? "Dock 창 없음" : signature)")
+        }
+        wasOpen = false
+        suppressUntilClosed = false
     }
 
     /// 이름표를 지우고, 닫힘이 감지될 때까지 다시 그리지 않는다.
@@ -111,7 +134,7 @@ final class MissionControlOverlay {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.S"
         events.append("\(formatter.string(from: Date())) \(message)")
-        if events.count > 20 { events.removeFirst(events.count - 20) }
+        if events.count > 30 { events.removeFirst(events.count - 30) }
     }
 
     /// 15초 동안 Mission Control이 열리면 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
@@ -127,7 +150,12 @@ final class MissionControlOverlay {
 
     private func tick() {
         tickCount += 1
-        let open = DockAccessibility.isMissionControlLikelyOpen()
+        let signature = DockAccessibility.dockWindowSignature()
+        if signature != lastSignature {
+            lastSignature = signature
+            log("Dock 창 변화: \(signature.isEmpty ? "없음" : signature)")
+        }
+        let open = signature != baselineSignature
 
         if !open {
             if wasOpen {
@@ -247,7 +275,8 @@ final class MissionControlOverlay {
         }
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
         lines.append("지금 Dock 창: \(Self.describeDockWindows())")
-        lines.append("지금 열림 판정: \(DockAccessibility.isMissionControlLikelyOpen() ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
+        lines.append("평소 상태 기준: \(baselineSignature.isEmpty ? "Dock 창 없음" : baselineSignature)")
+        lines.append("지금 열림 판정: \(DockAccessibility.dockWindowSignature() != baselineSignature ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
         if !events.isEmpty {
             lines.append("기록:")
             lines.append(contentsOf: events.map { "  " + $0 })
