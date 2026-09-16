@@ -221,17 +221,19 @@ final class MissionControlOverlay {
         let strip = ScreenText.Strip(screen: screen, fraction: captureFraction, scale: captureScale)
         self.strip = strip
         streamStarting = true
+        let stream = self.stream
         Task { [weak self] in
             do {
-                try await self?.stream.start(strip: strip)
+                try await stream.start(strip: strip)
                 await MainActor.run {
                     self?.streamStarting = false
                     self?.log("화면 스트림 시작")
                 }
             } catch {
+                let message = error.localizedDescription
                 await MainActor.run {
                     self?.streamStarting = false
-                    self?.log("화면 스트림 시작 실패: \(error.localizedDescription)")
+                    self?.log("화면 스트림 시작 실패: \(message)")
                 }
             }
         }

@@ -3,37 +3,19 @@ import Foundation
 /// 트랙패드의 손가락 위치를 직접 읽어 "세 손가락 이상으로 위로 쓸기"를 감지한다.
 /// (비공개 MultitouchSupport 프레임워크. 이벤트 탭으로는 손가락 개수와 방향을 알 수 없다.)
 final class TrackpadMonitor {
-    /// MultitouchSupport의 접촉 정보. 필드 순서는 고정되어 있다.
-    private struct MTPoint { var x: Float; var y: Float }
-    private struct MTReadout {
-        var position: MTPoint
-        var velocity: MTPoint
-    }
-    private struct MTTouch {
-        var frame: Int32
-        var timestamp: Double
-        var identifier: Int32
-        var state: Int32
-        var unknown1: Int32
-        var unknown2: Int32
-        var normalized: MTReadout
-        var size: Float
-        var unknown3: Int32
-        var angle: Float
-        var majorAxis: Float
-        var minorAxis: Float
-        var absolute: MTReadout
-        var unknown4: Int32
-        var unknown5: Int32
-        var density: Float
-    }
-
     private typealias DeviceRef = UnsafeMutableRawPointer
-    private typealias ContactCallback = @convention(c) (DeviceRef?, UnsafePointer<MTTouch>?, Int32, Double, Int32) -> Int32
+    /// 접촉 배열은 구조체 포인터지만, @convention(c)에는 Swift 구조체를 쓸 수 없어 원시 포인터로 받는다.
+    private typealias ContactCallback = @convention(c) (DeviceRef?, UnsafeMutableRawPointer?, Int32, Double, Int32) -> Int32
     private typealias CreateListFn = @convention(c) () -> Unmanaged<CFArray>?
     private typealias RegisterFn = @convention(c) (DeviceRef?, ContactCallback?) -> Void
     private typealias StartFn = @convention(c) (DeviceRef?, Int32) -> Void
     private typealias StopFn = @convention(c) (DeviceRef?) -> Void
+
+    // MTTouch 구조체에서 필요한 값의 위치 (바이트). 구조체 전체 크기는 아래 touchStride.
+    // 앞쪽: frame(4) timestamp(8, 8바이트 정렬) identifier(4) state(4) unknown(4,4)
+    // 그다음 normalized.position(x:4, y:4)
+    private static let touchStride = 112
+    private static let normalizedYOffset = 36
 
     /// 메인 스레드에서, 세 손가락 이상으로 위로 쓸었을 때 호출된다. 인자는 손가락 개수.
     static var onSwipeUp: ((Int) -> Void)?
@@ -42,7 +24,7 @@ final class TrackpadMonitor {
     private static var startY: Float?
     private static var startCount = 0
     private static var fired = false
-    /// 위로 쓸기로 인정할 최소 이동량 (트랙패드 세로 길이 대비)
+    /// 위로 쓸기로 인정할 최소 이동량 (트랙패드 세로 길이 대비 0~1)
     private static let minimumRise: Float = 0.08
 
     private static let handle: UnsafeMutableRawPointer? = {
@@ -63,7 +45,7 @@ final class TrackpadMonitor {
         let count = Int(touchCount)
 
         // 손가락이 3개 미만이면 제스처가 끝난 것
-        guard count >= 3, let touches else {
+        guard count >= 3, count <= 11, let touches else {
             startY = nil
             startCount = 0
             fired = false
@@ -73,9 +55,12 @@ final class TrackpadMonitor {
         // 손가락들의 평균 세로 위치 (0이 아래, 1이 위)
         var sum: Float = 0
         for index in 0..<count {
-            sum += touches[index].normalized.position.y
+            let offset = index * touchStride + normalizedYOffset
+            sum += touches.load(fromByteOffset: offset, as: Float.self)
         }
         let averageY = sum / Float(count)
+        // 값이 정상 범위를 벗어나면 구조체 해석이 틀린 것이므로 무시
+        guard averageY >= -0.5, averageY <= 1.5 else { return 0 }
 
         if startY == nil || count != startCount {
             startY = averageY
