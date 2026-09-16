@@ -35,8 +35,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 접근성 권한이 빌드마다 초기화되지 않도록 ad-hoc 서명
-codesign --force --sign - "$APP"
+# 자체 서명서(scripts/setup-signing.sh로 생성)가 있으면 그것으로 서명해 빌드 후에도 접근성 권한이 유지되게 한다.
+# 없으면 ad-hoc 서명 (이 경우 다시 빌드할 때마다 손쉬운 사용 권한을 다시 등록해야 한다).
+IDENTITY="DesktopNamer Local"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
+  codesign --force --sign "$IDENTITY" "$APP"
+  echo "서명: $IDENTITY"
+else
+  codesign --force --sign - "$APP"
+  echo "서명: ad-hoc (권한 유지를 원하면 ./scripts/setup-signing.sh 를 한 번 실행)"
+fi
 
 echo "빌드 완료: $APP"
 echo "실행: open \"$APP\""
