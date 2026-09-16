@@ -116,7 +116,7 @@ final class TrackpadMonitor {
             }
             guard layout != nil else { return 0 }
         }
-        guard let layout else { return 0 }
+        guard let found = layout else { return 0 }
 
         guard count >= 3 else {
             startY = nil
@@ -125,12 +125,12 @@ final class TrackpadMonitor {
             return 0
         }
 
-        let y = averageY(touches, count: count, candidate: layout)
+        let y = averageY(touches, count: count, candidate: found)
         guard y.isFinite, y >= -0.05, y <= 1.05 else {
             badReads += 1
             if badReads > 30 {
                 // 잘못 찾은 자리다. 처음부터 다시 탐색한다.
-                self.layout = nil
+                TrackpadMonitor.layout = nil
                 candidateScores.removeAll()
                 badReads = 0
             }

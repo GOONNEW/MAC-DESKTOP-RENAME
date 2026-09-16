@@ -29,15 +29,18 @@ enum Updater {
           pgrep -x DesktopNamer >/dev/null || break
           sleep 0.25
         done
-        ./scripts/update.sh
-        status=$?
+        ./scripts/update.sh 2>&1 | tee /tmp/desktopnamer-update.log
+        status=${PIPESTATUS[0]}
         if [ $status -eq 0 ]; then
           open "\(directory.path)/build/DesktopNamer.app"
           echo
           echo "업데이트 완료. 이 창은 닫아도 됩니다."
         else
           echo
-          echo "업데이트 실패 (코드 $status). 위 내용을 복사해서 알려주세요."
+          echo "업데이트 실패 (코드 $status). 아래 오류만 복사해서 알려주세요:"
+          echo "----------------------------------------"
+          grep -A 3 "error:" /tmp/desktopnamer-update.log | head -40
+          echo "----------------------------------------"
         fi
         """
 
