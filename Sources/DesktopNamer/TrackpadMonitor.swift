@@ -2,30 +2,45 @@ import Foundation
 
 /// 트랙패드의 손가락 위치를 직접 읽어 "세 손가락 이상으로 위로 쓸기"를 감지한다.
 /// (비공개 MultitouchSupport 프레임워크. 이벤트 탭으로는 손가락 개수와 방향을 알 수 없다.)
+///
+/// 접촉 구조체의 크기와 필드 위치는 macOS 버전마다 다를 수 있어, 처음 몇 프레임 동안
+/// 여러 후보를 시험해 "0~1 범위의 좌표 한 쌍"이 나오는 자리를 자동으로 찾는다.
 final class TrackpadMonitor {
     private typealias DeviceRef = UnsafeMutableRawPointer
-    /// 접촉 배열은 구조체 포인터지만, @convention(c)에는 Swift 구조체를 쓸 수 없어 원시 포인터로 받는다.
+    /// @convention(c)에는 Swift 구조체를 쓸 수 없어 원시 포인터로 받는다.
     private typealias ContactCallback = @convention(c) (DeviceRef?, UnsafeMutableRawPointer?, Int32, Double, Int32) -> Int32
     private typealias CreateListFn = @convention(c) () -> Unmanaged<CFArray>?
     private typealias RegisterFn = @convention(c) (DeviceRef?, ContactCallback?) -> Void
     private typealias StartFn = @convention(c) (DeviceRef?, Int32) -> Void
     private typealias StopFn = @convention(c) (DeviceRef?) -> Void
 
-    // MTTouch 구조체에서 필요한 값의 위치 (바이트). 구조체 전체 크기는 아래 touchStride.
-    // 앞쪽: frame(4) timestamp(8, 8바이트 정렬) identifier(4) state(4) unknown(4,4)
-    // 그다음 normalized.position(x:4, y:4)
-    private static let touchStride = 112
-    private static let normalizedYOffset = 36
-
     /// 메인 스레드에서, 세 손가락 이상으로 위로 쓸었을 때 호출된다. 인자는 손가락 개수.
     static var onSwipeUp: ((Int) -> Void)?
 
-    /// 제스처 시작 시점의 평균 y 위치와 손가락 개수
+    /// 시험해 볼 (구조체 크기, y 위치) 후보들
+    private static let candidates: [(stride: Int, yOffset: Int)] = [
+        (112, 36), (112, 32), (108, 32), (104, 32), (96, 32), (120, 36), (128, 40), (144, 40),
+    ]
+    /// 찾아낸 자리 (nil이면 아직 탐색 중)
+    private static var layout: (stride: Int, yOffset: Int)?
+    private static var probeFrames = 0
+
+    // 제스처 상태
     private static var startY: Float?
     private static var startCount = 0
     private static var fired = false
-    /// 위로 쓸기로 인정할 최소 이동량 (트랙패드 세로 길이 대비 0~1)
-    private static let minimumRise: Float = 0.08
+    /// 위로 쓸기로 인정할 최소 이동량 (0~1 정규화 좌표)
+    private static let minimumRise: Float = 0.06
+
+    // 진단
+    private(set) static var lastCount = 0
+    private(set) static var lastY: Float = -1
+    private(set) static var lastRise: Float = 0
+    private(set) static var swipeCount = 0
+    static var layoutNote: String {
+        guard let layout else { return "손가락 위치 탐색 중 (프레임 \(probeFrames)개)" }
+        return "구조체 \(layout.stride)바이트, y 위치 \(layout.yOffset)"
+    }
 
     private static let handle: UnsafeMutableRawPointer? = {
         dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW)
@@ -41,38 +56,73 @@ final class TrackpadMonitor {
     private static let start = symbol("MTDeviceStart", as: StartFn.self)
     private static let stop = symbol("MTDeviceStop", as: StopFn.self)
 
+    /// 후보가 맞는지 본다: 모든 손가락의 x, y가 0~1 안에 들어와야 한다.
+    private static func isPlausible(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> Bool {
+        for index in 0..<count {
+            let base = index * candidate.stride
+            let x = touches.load(fromByteOffset: base + candidate.yOffset - 4, as: Float.self)
+            let y = touches.load(fromByteOffset: base + candidate.yOffset, as: Float.self)
+            guard x.isFinite, y.isFinite, x >= 0, x <= 1, y >= 0, y <= 1 else { return false }
+        }
+        return true
+    }
+
+    private static func averageY(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> Float {
+        var sum: Float = 0
+        for index in 0..<count {
+            sum += touches.load(fromByteOffset: index * candidate.stride + candidate.yOffset, as: Float.self)
+        }
+        return sum / Float(count)
+    }
+
     private static let callback: ContactCallback = { _, touches, touchCount, _, _ in
         let count = Int(touchCount)
+        lastCount = count
 
-        // 손가락이 3개 미만이면 제스처가 끝난 것
-        guard count >= 3, count <= 11, let touches else {
+        guard count >= 1, count <= 11, let touches else {
             startY = nil
             startCount = 0
             fired = false
             return 0
         }
 
-        // 손가락들의 평균 세로 위치 (0이 아래, 1이 위)
-        var sum: Float = 0
-        for index in 0..<count {
-            let offset = index * touchStride + normalizedYOffset
-            sum += touches.load(fromByteOffset: offset, as: Float.self)
+        // 아직 자리를 못 찾았으면, 손가락 2개 이상일 때 후보를 시험한다
+        if layout == nil {
+            probeFrames += 1
+            guard count >= 2 else { return 0 }
+            for candidate in candidates where isPlausible(touches, count: count, candidate: candidate) {
+                layout = candidate
+                break
+            }
+            guard layout != nil else { return 0 }
         }
-        let averageY = sum / Float(count)
-        // 값이 정상 범위를 벗어나면 구조체 해석이 틀린 것이므로 무시
-        guard averageY >= -0.5, averageY <= 1.5 else { return 0 }
+        guard let layout else { return 0 }
+
+        guard count >= 3 else {
+            startY = nil
+            startCount = 0
+            fired = false
+            return 0
+        }
+
+        let y = averageY(touches, count: count, candidate: layout)
+        guard y.isFinite, y >= 0, y <= 1 else { return 0 }
+        lastY = y
 
         if startY == nil || count != startCount {
-            startY = averageY
+            startY = y
             startCount = count
             fired = false
             return 0
         }
         guard !fired, let origin = startY else { return 0 }
 
+        let rise = y - origin
+        lastRise = rise
         // 위로 충분히 올라갔을 때만 알린다 (가만히 얹거나 좌우로 쓸면 반응하지 않음)
-        if averageY - origin >= minimumRise {
+        if rise >= minimumRise {
             fired = true
+            swipeCount += 1
             let fingers = count
             DispatchQueue.main.async { onSwipeUp?(fingers) }
         }
@@ -105,7 +155,7 @@ final class TrackpadMonitor {
             start(device, 0)
             devices.append(device)
         }
-        note = devices.isEmpty ? "트랙패드 장치 없음" : "트랙패드 \(devices.count)개 감시 중 (위로 쓸기)"
+        note = devices.isEmpty ? "트랙패드 장치 없음" : "트랙패드 \(devices.count)개"
         return !devices.isEmpty
     }
 
@@ -116,5 +166,9 @@ final class TrackpadMonitor {
         Self.startY = nil
         Self.fired = false
         note = "정지"
+    }
+
+    var diagnostics: String {
+        "\(note), \(Self.layoutNote), 마지막 손가락 \(Self.lastCount)개 y=\(String(format: "%.3f", Self.lastY)) 이동 \(String(format: "%.3f", Self.lastRise)), 위로 쓸기 \(Self.swipeCount)회"
     }
 }

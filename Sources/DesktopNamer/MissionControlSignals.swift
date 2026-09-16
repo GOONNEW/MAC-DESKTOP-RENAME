@@ -25,7 +25,7 @@ final class MissionControlSignals {
     private(set) var lastOpenNote = "없음"
 
     var note: String {
-        "트랙패드 \(trackpad.note) / 키보드 \(keyboard.lastNote)"
+        "트랙패드 \(trackpad.diagnostics) / 키보드 \(keyboard.lastNote)"
     }
 
     func start() {

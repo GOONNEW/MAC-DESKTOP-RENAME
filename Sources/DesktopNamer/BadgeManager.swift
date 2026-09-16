@@ -326,9 +326,10 @@ final class BadgeManager {
             }
             queue.removeFirst()
             SpaceSwitcher.switchTo(number: number)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-                self?.spaces.refresh()
-                if let active = self?.spaces.activeSpace { self?.ensureBadge(for: active) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+                guard let self else { return }
+                self.spaces.refresh()
+                if let active = self.spaces.activeSpace { self.ensureBadge(for: active) }
                 step()
             }
         }
