@@ -40,6 +40,8 @@ final class MissionControlOverlay {
     /// 데스크탑 전환으로 지운 뒤, 닫힘이 한 번 감지될 때까지 다시 그리지 않는다
     private var suppressUntilClosed = false
     private var spaceObserver: NSObjectProtocol?
+    private var appObserver: NSObjectProtocol?
+    private var inputMonitors: [Any] = []
 
     init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
@@ -66,11 +68,28 @@ final class MissionControlOverlay {
         spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self, self.isShowing else { return }
-            self.log("데스크탑 전환으로 이름표 제거")
-            self.hide()
-            self.suppressUntilClosed = true
+            self?.dismiss(reason: "데스크탑 전환")
         }
+        appObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.dismiss(reason: "앱 전환")
+        }
+        // Mission Control 안에서의 클릭이나 키 입력은 거의 항상 닫는 동작이다
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
+            let reason = event.type == .keyDown ? "키 입력" : "클릭"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.dismiss(reason: reason) }
+        } {
+            inputMonitors.append(monitor)
+        }
+    }
+
+    /// 이름표를 지우고, 닫힘이 감지될 때까지 다시 그리지 않는다.
+    private func dismiss(reason: String) {
+        guard isShowing else { return }
+        log("\(reason)으로 이름표 제거")
+        hide()
+        suppressUntilClosed = true
     }
 
     func stop() {
@@ -80,6 +99,12 @@ final class MissionControlOverlay {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
             self.spaceObserver = nil
         }
+        if let appObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(appObserver)
+            self.appObserver = nil
+        }
+        inputMonitors.forEach { NSEvent.removeMonitor($0) }
+        inputMonitors.removeAll()
         hide()
     }
 
@@ -256,12 +281,15 @@ final class MissionControlOverlay {
         panels.forEach { $0.orderOut(nil) }
         panels.removeAll()
 
-        for screen in NSScreen.screens {
-            let onThisScreen = labels.filter { screen.frame.intersects($0.frame) }
-            guard !onThisScreen.isEmpty else { continue }
-
+        // 이름표마다 딱 그 크기의 작은 패널을 만든다. 화면 전체 패널은 Mission Control 썸네일을 가린다.
+        for label in labels {
+            let pill = Self.makeLabel(text: label.text, in: CGRect(origin: .zero, size: label.frame.size))
+            let origin = CGPoint(
+                x: label.frame.midX - pill.frame.width / 2,
+                y: label.frame.midY - pill.frame.height / 2
+            )
             let panel = NSPanel(
-                contentRect: screen.frame,
+                contentRect: CGRect(origin: origin, size: pill.frame.size),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -273,18 +301,8 @@ final class MissionControlOverlay {
             panel.hidesOnDeactivate = false
             panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-
-            let container = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
-            for label in onThisScreen {
-                let local = CGRect(
-                    x: label.frame.minX - screen.frame.minX,
-                    y: label.frame.minY - screen.frame.minY,
-                    width: label.frame.width,
-                    height: label.frame.height
-                )
-                container.addSubview(Self.makeLabel(text: label.text, in: local))
-            }
-            panel.contentView = container
+            pill.frame.origin = .zero
+            panel.contentView = pill
             panel.orderFrontRegardless()
             panels.append(panel)
         }
