@@ -30,6 +30,7 @@ final class BadgeManager {
     private var running = false
     private(set) var isVisible = false
     private var hideTimer: Timer?
+    private var shownAt: Date?
     private var events: [String] = []
 
     var corner: Corner = .bottomRight {
@@ -126,18 +127,22 @@ final class BadgeManager {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             guard let self, self.running else { return }
             self.setVisible(true)
+            self.shownAt = Date()
             self.log("표시 (\(reason))")
         }
-        // 닫힘 신호를 놓쳐도 배지가 영원히 남지 않도록
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+        // 닫힘 신호를 모두 놓쳐도 오래 남지 않도록
+        hideTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
             self?.hide(reason: "시간 초과")
         }
     }
 
     func hide(reason: String) {
         guard isVisible else { return }
+        // 막 보이기 시작한 직후(여는 제스처의 잔여 이벤트)는 무시한다
+        if let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
         setVisible(false)
+        shownAt = nil
         log("숨김 (\(reason))")
     }
 
@@ -154,6 +159,7 @@ final class BadgeManager {
         guard running else { return }
         hideTimer?.invalidate()
         setVisible(true)
+        shownAt = Date().addingTimeInterval(-1)
         log("미리 보기")
         hideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
             self?.hide(reason: "미리 보기 종료")

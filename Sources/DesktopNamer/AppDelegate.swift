@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore, settings: settings)
         overlay = MissionControlOverlay(spaces: spaceManager, names: nameStore)
         badges = BadgeManager(spaces: spaceManager, names: nameStore)
+        signals.isShowing = { [weak self] in self?.badges?.isVisible ?? false }
         signals.onOpenLikely = { [weak self] reason in
             self?.badges?.show(reason: reason)
             self?.overlay?.noteOpenLikely(reason: reason)

@@ -9,8 +9,13 @@ final class MissionControlSignals {
     var onOpenLikely: ((String) -> Void)?
     var onCloseLikely: ((String) -> Void)?
 
+    /// 지금 이름이 보이는 중인지. 보이는 중에 들어온 여는 동작은 "닫기"로 해석한다.
+    var isShowing: (() -> Bool)?
+
     private let trackpad = TrackpadMonitor()
     private let keyboard = MissionControlTrigger()
+    private var mouseMonitor: Any?
+    private var lastMouseLocation: NSPoint?
     private var trackpadWorks = false
     private var observers: [NSObjectProtocol] = []
     private var inputMonitors: [Any] = []
@@ -41,11 +46,29 @@ final class MissionControlSignals {
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             if app?.bundleIdentifier != "com.apple.dock" { self?.onCloseLikely?("앱 전환") }
         })
-        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown], handler: { [weak self] event in
+        let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
             let reason = event.type == .keyDown ? "키 입력" : "클릭"
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.onCloseLikely?(reason) }
         })
         if let monitor { inputMonitors.append(monitor) }
+
+        // Mission Control이 닫히면 커서가 평소 화면 위에서 움직인다. 크게 움직이면 닫힌 것으로 본다.
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .scrollWheel], handler: { [weak self] event in
+            guard let self, self.isShowing?() == true else {
+                self?.lastMouseLocation = NSEvent.mouseLocation
+                return
+            }
+            if event.type == .scrollWheel {
+                self.onCloseLikely?("스크롤")
+                return
+            }
+            let now = NSEvent.mouseLocation
+            defer { self.lastMouseLocation = now }
+            guard let previous = self.lastMouseLocation else { return }
+            let distance = hypot(now.x - previous.x, now.y - previous.y)
+            if distance > 120 { self.onCloseLikely?("마우스 이동") }
+        })
+        if let mouseMonitor { inputMonitors.append(mouseMonitor) }
     }
 
     func stop() {
@@ -61,7 +84,14 @@ final class MissionControlSignals {
     private func open(_ reason: String) {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
+        // 이미 보이는 중이라면 같은 제스처는 "닫기"다 (세 손가락으로 열고 세 손가락으로 닫는 경우)
+        if isShowing?() == true {
+            lastOpenNote = "\(reason) → 닫기 (\(formatter.string(from: Date())))"
+            onCloseLikely?(reason + " (다시)")
+            return
+        }
         lastOpenNote = "\(reason) (\(formatter.string(from: Date())))"
+        lastMouseLocation = NSEvent.mouseLocation
         onOpenLikely?(reason)
     }
 }
