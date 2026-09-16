@@ -53,7 +53,8 @@ final class MissionControlSignals {
         })
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
             let reason = event.type == .keyDown ? "키 입력" : "클릭"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.onCloseLikely?(reason) }
+            // 클릭 직후 화면이 바뀌는 데 시간이 걸리므로 조금 늦게 판단한다
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self?.onCloseLikely?(reason) }
         })
         if let monitor { inputMonitors.append(monitor) }
 

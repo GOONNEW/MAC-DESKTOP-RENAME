@@ -76,6 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] only in self?.badges?.mainScreenOnly = only }
             .store(in: &cancellables)
 
+        settings.$badgeMirrorToOtherScreens
+            .sink { [weak self] mirror in self?.badges?.mirrorToOtherScreens = mirror }
+            .store(in: &cancellables)
+
         settings.$alwaysWatch
             .sink { [weak self] always in self?.overlay?.alwaysWatch = always }
             .store(in: &cancellables)

@@ -63,12 +63,24 @@ final class BadgeManager {
     }
 
     /// true면 주 화면에만 배지를 만든다 (듀얼 모니터에서 한쪽만 보이게)
-    var mainScreenOnly = false {
+    var mainScreenOnly = true {
         didSet {
             guard mainScreenOnly != oldValue else { return }
             rebuildAll()
         }
     }
+
+    /// 보조 화면에도 현재 데스크탑 이름을 함께 띄운다 (디스플레이마다 공간 분리가 꺼진 경우용)
+    var mirrorToOtherScreens = false {
+        didSet {
+            guard mirrorToOtherScreens != oldValue else { return }
+            if !mirrorToOtherScreens { removeMirrors() }
+        }
+    }
+
+    /// 보조 화면에 띄우는 배지 (데스크탑에 속하지 않고 모든 공간을 따라다닌다)
+    private var mirrors: [NSPanel] = []
+    private var mirrorFields: [NSTextField] = []
 
     private let margin = CGSize(width: 40, height: 96) // 아래쪽은 Dock 자리를 피한다
 
@@ -115,6 +127,7 @@ final class BadgeManager {
         badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
         badges.removeAll()
         fields.removeAll()
+        removeMirrors()
         isVisible = false
     }
 
@@ -156,6 +169,44 @@ final class BadgeManager {
         if visible, let active = spaces.activeSpace, let panels = badges[active.uuid] {
             panels.forEach { $0.orderFrontRegardless() }
         }
+        updateMirrors(visible: visible)
+    }
+
+    // MARK: - 보조 화면 미러
+
+    private func updateMirrors(visible: Bool) {
+        guard mirrorToOtherScreens, mainScreenOnly else {
+            removeMirrors()
+            return
+        }
+        guard visible, let active = spaces.activeSpace, let name = names.customName(for: active) else {
+            mirrors.forEach { $0.alphaValue = 0 }
+            return
+        }
+        let targets = Array(NSScreen.screens.dropFirst())
+        if mirrors.count != targets.count {
+            removeMirrors()
+            for screen in targets {
+                let (panel, field) = makePanel(on: screen, text: name)
+                // 미러는 모든 데스크탑을 따라다닌다
+                panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+                mirrors.append(panel)
+                mirrorFields.append(field)
+            }
+        }
+        for (index, panel) in mirrors.enumerated() {
+            guard index < targets.count, index < mirrorFields.count else { continue }
+            mirrorFields[index].stringValue = name
+            layoutPanel(panel, field: mirrorFields[index], on: targets[index])
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+        }
+    }
+
+    private func removeMirrors() {
+        mirrors.forEach { $0.orderOut(nil) }
+        mirrors.removeAll()
+        mirrorFields.removeAll()
     }
 
     /// 5초 동안 배지를 보여 준다 (제대로 뜨는지 눈으로 확인용)
@@ -252,51 +303,46 @@ final class BadgeManager {
         guard let panels = badges[uuid], let texts = fields[uuid] else { return }
         for (index, panel) in panels.enumerated() {
             guard index < texts.count else { continue }
-            let field = texts[index]
             let screen = panel.screen ?? NSScreen.screens[min(index, NSScreen.screens.count - 1)]
-            var pointSize = (screen.frame.height * size.ratio).rounded()
-            let maxWidth = screen.frame.width * 0.8
-            let paddingX = (pointSize * 0.4).rounded()
-            let paddingY = (pointSize * 0.22).rounded()
-            // 이름이 길면 화면에 들어갈 때까지 글자를 줄인다
-            while pointSize > 18 {
-                field.font = .systemFont(ofSize: pointSize, weight: .heavy)
-                field.sizeToFit()
-                if field.frame.width + paddingX * 2 <= maxWidth { break }
-                pointSize -= 4
-            }
-            field.font = .systemFont(ofSize: pointSize, weight: .heavy)
-            field.sizeToFit()
-            let width = min(field.frame.width + paddingX * 2, maxWidth)
-            let height = field.frame.height + paddingY * 2
-            (panel.contentView?.layer)?.cornerRadius = (height * 0.28).rounded()
-            field.frame = CGRect(x: paddingX, y: paddingY, width: width - paddingX * 2, height: field.frame.height)
-            panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
-
-            let visible = screen.visibleFrame
-            let full = screen.frame
-            var origin = CGPoint.zero
-            switch corner {
-            case .bottomRight:
-                origin = CGPoint(x: full.maxX - margin.width - width, y: full.minY + margin.height)
-            case .bottomLeft:
-                origin = CGPoint(x: full.minX + margin.width, y: full.minY + margin.height)
-            case .topRight:
-                origin = CGPoint(x: full.maxX - margin.width - width, y: visible.maxY - margin.width - height)
-            case .topLeft:
-                origin = CGPoint(x: full.minX + margin.width, y: visible.maxY - margin.width - height)
-            }
-            panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
+            layoutPanel(panel, field: texts[index], on: screen)
         }
     }
 
-    /// 설정이 바뀌면 배지를 다시 만든다 (지금 데스크탑 것만. 나머지는 방문 시 다시 만들어진다)
-    private func rebuildAll() {
-        badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
-        badges.removeAll()
-        fields.removeAll()
-        if let active = spaces.activeSpace { ensureBadge(for: active) }
-        log("배지 다시 만듦 (설정 변경)")
+    /// 배지 하나를 화면 구석에 맞춰 놓는다
+    private func layoutPanel(_ panel: NSPanel, field: NSTextField, on screen: NSScreen) {
+        var pointSize = (screen.frame.height * size.ratio).rounded()
+        let maxWidth = screen.frame.width * 0.8
+        let paddingX = (pointSize * 0.4).rounded()
+        let paddingY = (pointSize * 0.22).rounded()
+        // 이름이 길면 화면에 들어갈 때까지 글자를 줄인다
+        while pointSize > 18 {
+            field.font = .systemFont(ofSize: pointSize, weight: .heavy)
+            field.sizeToFit()
+            if field.frame.width + paddingX * 2 <= maxWidth { break }
+            pointSize -= 4
+        }
+        field.font = .systemFont(ofSize: pointSize, weight: .heavy)
+        field.sizeToFit()
+        let width = min(field.frame.width + paddingX * 2, maxWidth)
+        let height = field.frame.height + paddingY * 2
+        (panel.contentView?.layer)?.cornerRadius = (height * 0.28).rounded()
+        field.frame = CGRect(x: paddingX, y: paddingY, width: width - paddingX * 2, height: field.frame.height)
+        panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
+
+        let visible = screen.visibleFrame
+        let full = screen.frame
+        var origin = CGPoint.zero
+        switch corner {
+        case .bottomRight:
+            origin = CGPoint(x: full.maxX - margin.width - width, y: full.minY + margin.height)
+        case .bottomLeft:
+            origin = CGPoint(x: full.minX + margin.width, y: full.minY + margin.height)
+        case .topRight:
+            origin = CGPoint(x: full.maxX - margin.width - width, y: visible.maxY - margin.width - height)
+        case .topLeft:
+            origin = CGPoint(x: full.minX + margin.width, y: visible.maxY - margin.width - height)
+        }
+        panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
     }
 
     private func removeBadges(notIn uuids: Set<String>) {
@@ -400,7 +446,7 @@ final class BadgeManager {
     func diagnostics() -> String {
         var lines: [String] = []
         lines.append("이름 배지: \(running ? "켜짐" : "꺼짐"), 지금 \(isVisible ? "보임" : "숨김"), 위치 \(corner.title), 크기 \(size.title), \(mainScreenOnly ? "주 화면만" : "모든 화면")")
-        lines.append("화면 수: \(NSScreen.screens.count), 배지 창 수: \(badges.values.reduce(0) { $0 + $1.count })")
+        lines.append("화면 수: \(NSScreen.screens.count), 배지 창 수: \(badges.values.reduce(0) { $0 + $1.count }), 보조 화면 미러: \(mirrorToOtherScreens ? "켜짐 (\(mirrors.count)개)" : "꺼짐")")
         let prepared = spaces.spaces.filter { badges[$0.uuid] != nil }.map { $0.defaultName }
         let missing = spaces.spaces.filter { !$0.isFullscreen && badges[$0.uuid] == nil }.map { $0.defaultName }
         lines.append("배지 있는 데스크탑: \(prepared.isEmpty ? "없음" : prepared.joined(separator: ", "))")

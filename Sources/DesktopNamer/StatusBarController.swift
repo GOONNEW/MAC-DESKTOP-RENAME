@@ -162,6 +162,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             mainOnly.target = self
             mainOnly.state = settings.badgeMainScreenOnly ? .on : .off
             displayMenu.addItem(mainOnly)
+
+            let mirror = NSMenuItem(title: "보조 모니터에도 같은 이름 표시", action: #selector(toggleMirror(_:)), keyEquivalent: "")
+            mirror.target = self
+            mirror.state = settings.badgeMirrorToOtherScreens ? .on : .off
+            mirror.isEnabled = settings.badgeMainScreenOnly
+            displayMenu.addItem(mirror)
         }
 
         displayMenu.addItem(.separator())
@@ -287,6 +293,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleMainScreenOnly(_ sender: Any?) {
         settings.badgeMainScreenOnly.toggle()
+    }
+
+    @objc private func toggleMirror(_ sender: Any?) {
+        settings.badgeMirrorToOtherScreens.toggle()
     }
 
     @objc private func prepareBadges(_ sender: Any?) {
