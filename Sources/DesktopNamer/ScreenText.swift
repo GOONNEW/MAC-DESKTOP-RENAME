@@ -46,6 +46,22 @@ enum ScreenText {
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
     }
 
+    /// 이미지가 이전과 같은지 빠르게 비교하기 위한 해시. 픽셀을 듬성듬성 샘플링한다.
+    static func quickHash(of image: CGImage) -> Int {
+        guard let data = image.dataProvider?.data else { return 0 }
+        let length = CFDataGetLength(data)
+        guard let bytes = CFDataGetBytePtr(data), length > 0 else { return 0 }
+        var hasher = Hasher()
+        hasher.combine(length)
+        let step = max(1, length / 20000)
+        var index = 0
+        while index < length {
+            hasher.combine(bytes[index])
+            index += step
+        }
+        return hasher.finalize()
+    }
+
     /// 캡처 이미지에서 "데스크탑 N" / "Desktop N" 글자를 찾아 화면 좌표로 돌려준다.
     static func recognizeDesktopLabels(in image: CGImage, screen: NSScreen, fraction: CGFloat) throws -> Result {
         let request = VNRecognizeTextRequest()

@@ -1,7 +1,10 @@
 import AppKit
 
 /// Mission Control이 열리면 "데스크탑 N" 라벨 자리에 사용자 지정 이름을 덮어 그린다.
-/// 라벨 위치는 화면을 찍어 글자를 인식해서 찾는다 (이 macOS에서는 Dock 접근성 트리가 비어 있음).
+///
+/// 이 macOS에서는 Mission Control이 열려도 앱이 밖에서 관찰할 수 있는 상태(Dock 접근성 트리, 창 목록,
+/// WindowServer 알림, 메뉴 막대)가 전혀 변하지 않는다. 그래서 화면 위쪽을 주기적으로 찍어
+/// "데스크탑 N" 라벨 줄이 있는지 직접 확인하고, 있으면 그 자리에 이름표를 그리고 없으면 지운다.
 final class MissionControlOverlay {
     private struct Label: Equatable {
         let frame: CGRect
@@ -19,40 +22,27 @@ final class MissionControlOverlay {
     /// 캡처할 화면 위쪽 비율
     private let captureFraction: CGFloat = 0.3
 
-    // Mission Control 열림 상태와 인식 시도
-    private var wasOpen = false
-    private var openedAt: Date?
-    private var ocrAttempts = 0
+    // 인식 상태
     private var ocrInFlight = false
     private var nextOCRAt = Date.distantPast
-    private let maxOCRAttempts = 6
+    private var lastImageHash = 0
 
-    // 진단 정보
-    private var tickCount = 0
-    private var openCount = 0
-    private var lastOpenAt: Date?
-    private var lastOCRNote = "아직 실행 안 됨"
-    private var lastOCRTexts: [String] = []
-    private var lastLabelNote = ""
-    private var axNote = ""
-    private var testMode = false
-    private var events: [String] = []
-    /// 데스크탑 전환으로 지운 뒤, 닫힘이 한 번 감지될 때까지 다시 그리지 않는다
-    private var suppressUntilClosed = false
-    /// WindowServer 알림으로 파악한 열림 상태
-    private var wsOpen = false
-    /// Dock이 맨 앞 앱인지 (Mission Control이 열리면 그렇게 된다)
-    private var dockWasFront = false
-    private var registerNote = ""
-    private var lastServerSignature = ""
-    private var lastStatusNote = ""
-    private var menuBarWasHidden = false
-    /// 시스템 Menubar 창을 한 번이라도 본 적이 있어야 "사라짐" 신호를 믿는다
-    private var menuBarWindowSeen = false
-    private var lastSignalKey = ""
+    // 안전장치
     private var spaceObserver: NSObjectProtocol?
     private var appObserver: NSObjectProtocol?
     private var inputMonitors: [Any] = []
+    private var testMode = false
+
+    // 진단 정보
+    private var tickCount = 0
+    private var ocrRuns = 0
+    private var skippedSameImage = 0
+    private var foundCount = 0
+    private var lastFoundAt: Date?
+    private var lastOCRNote = "아직 실행 안 됨"
+    private var lastOCRTexts: [String] = []
+    private var lastLabelNote = ""
+    private var events: [String] = []
 
     init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
@@ -60,6 +50,8 @@ final class MissionControlOverlay {
     }
 
     var isRunning: Bool { timer != nil }
+
+    // MARK: - 시작/정지
 
     func start() {
         guard timer == nil else { return }
@@ -70,15 +62,12 @@ final class MissionControlOverlay {
         if !ScreenText.hasScreenCaptureAccess {
             ScreenText.requestScreenCaptureAccess()
         }
-        SkyLight.onMissionControlEvent = { [weak self] type in self?.handleWindowServerEvent(type) }
-        registerNote = SkyLight.registerMissionControlNotifications()
-        log("WindowServer 알림 등록: \(registerNote)")
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.tick()
         }
-        timer?.tolerance = 0.05
+        timer?.tolerance = 0.03
 
-        // 데스크탑이 바뀌면 Mission Control은 닫힌 것이므로 무조건 지운다 (안전장치)
+        // 데스크탑/앱 전환은 Mission Control이 닫혔다는 뜻이므로 바로 지운다
         spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -86,11 +75,8 @@ final class MissionControlOverlay {
         }
         appObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            let id = app?.bundleIdentifier ?? "?"
-            self?.log("앱 활성화: \(id)")
-            if id != "com.apple.dock" { self?.dismiss(reason: "앱 전환") }
+        ) { [weak self] _ in
+            self?.dismiss(reason: "앱 전환")
         }
         // Mission Control 안에서의 클릭이나 키 입력은 거의 항상 닫는 동작이다
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown], handler: { [weak self] event in
@@ -98,28 +84,6 @@ final class MissionControlOverlay {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.dismiss(reason: reason) }
         })
         if let monitor { inputMonitors.append(monitor) }
-    }
-
-    private func handleWindowServerEvent(_ type: UInt32) {
-        switch type {
-        case 1204:
-            log("WindowServer: Mission Control 열림 (1204)")
-            wsOpen = true
-        case 1207:
-            log("WindowServer: 닫힘 (1207)")
-            wsOpen = false
-        default:
-            log("WindowServer: 이벤트 \(type)")
-            wsOpen = false
-        }
-    }
-
-    /// 이름표를 지우고, 닫힘이 감지될 때까지 다시 그리지 않는다.
-    private func dismiss(reason: String) {
-        guard isShowing else { return }
-        log("\(reason)으로 이름표 제거")
-        hide()
-        suppressUntilClosed = true
     }
 
     func stop() {
@@ -138,14 +102,7 @@ final class MissionControlOverlay {
         hide()
     }
 
-    private func log(_ message: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.S"
-        events.append("\(formatter.string(from: Date())) \(message)")
-        if events.count > 40 { events.removeFirst(events.count - 40) }
-    }
-
-    /// 15초 동안 Mission Control이 열리면 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
+    /// 15초 동안 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
     func runVisibilityTest() {
         testMode = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
@@ -158,67 +115,6 @@ final class MissionControlOverlay {
 
     private func tick() {
         tickCount += 1
-        let dockFront = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.dock"
-        if dockFront != dockWasFront {
-            dockWasFront = dockFront
-            log(dockFront ? "Dock이 맨 앞 앱이 됨" : "Dock이 맨 앞에서 벗어남")
-        }
-        // 시스템 창 목록 변화 기록 (메뉴 막대가 사라지는지 확인용)
-        let serverSignature = DockAccessibility.windowServerSignature()
-        if serverSignature != lastServerSignature {
-            lastServerSignature = serverSignature
-            log("시스템 창: \(serverSignature.isEmpty ? "없음" : serverSignature)")
-        }
-        // 우리 메뉴 막대 아이콘 창의 상태 기록
-        let statusNote = Self.statusWindowNote()
-        if statusNote != lastStatusNote {
-            lastStatusNote = statusNote
-            log("메뉴 막대 아이콘 창: \(statusNote)")
-        }
-        let menuBarVisible = DockAccessibility.isMenuBarVisible()
-        if menuBarVisible { menuBarWindowSeen = true }
-        let menuBarHidden = (menuBarWindowSeen && !menuBarVisible) || Self.isStatusWindowOccluded()
-        if menuBarHidden != menuBarWasHidden {
-            menuBarWasHidden = menuBarHidden
-            log(menuBarHidden ? "메뉴 막대 사라짐" : "메뉴 막대 다시 보임")
-        }
-        let open = wsOpen || dockFront || menuBarHidden
-
-        // 어떤 신호든 바뀌면 새 상태로 보고 인식을 다시 시도할 수 있게 한다
-        let signalKey = "\(wsOpen)/\(dockFront)/\(menuBarHidden)"
-        if signalKey != lastSignalKey {
-            lastSignalKey = signalKey
-            if !isShowing {
-                wasOpen = false
-                suppressUntilClosed = false
-                ocrAttempts = 0
-            }
-        }
-
-        if !open {
-            if wasOpen {
-                log("닫힘 감지")
-                hide()
-                ocrAttempts = 0
-                ocrInFlight = false
-            }
-            wasOpen = false
-            suppressUntilClosed = false
-            return
-        }
-
-        if suppressUntilClosed { return }
-
-        if !wasOpen {
-            wasOpen = true
-            openedAt = Date()
-            lastOpenAt = openedAt
-            openCount += 1
-            log("열림 감지 (WindowServer: \(wsOpen ? "열림" : "-"), Dock 맨 앞: \(dockFront ? "예" : "아니오"))")
-            ocrAttempts = 0
-            nextOCRAt = Date().addingTimeInterval(0.35) // 열리는 애니메이션이 끝날 때까지 대기
-            axNote = DockAccessibility.scan().note
-        }
 
         if testMode, !isShowing, let screen = NSScreen.screens.first {
             let frame = CGRect(x: screen.frame.midX - 60, y: screen.frame.maxY - 220, width: 120, height: 24)
@@ -227,59 +123,65 @@ final class MissionControlOverlay {
             return
         }
 
-        guard !isShowing, !ocrInFlight, ocrAttempts < maxOCRAttempts, Date() >= nextOCRAt else { return }
+        guard !ocrInFlight, Date() >= nextOCRAt else { return }
         startOCR()
     }
 
-    private static var statusWindow: NSWindow? {
-        NSApp.windows.first { String(describing: type(of: $0)).contains("StatusBar") }
-    }
-
-    private static func statusWindowNote() -> String {
-        guard let window = statusWindow else { return "없음" }
-        let visible = window.occlusionState.contains(.visible)
-        let f = window.frame
-        return "\(visible ? "보임" : "가려짐"), 위치 (\(Int(f.minX)), \(Int(f.minY))) \(Int(f.width))×\(Int(f.height)), isVisible=\(window.isVisible)"
-    }
-
-    private static func isStatusWindowOccluded() -> Bool {
-        guard let window = statusWindow, window.isVisible else { return false }
-        return !window.occlusionState.contains(.visible)
-    }
+    /// 열려 있을 때는 조금 더 자주, 닫혀 있을 때는 덜 자주 확인한다.
+    private var pollInterval: TimeInterval { isShowing ? 0.5 : 0.7 }
 
     private func startOCR() {
         guard ScreenText.hasScreenCaptureAccess else {
             lastOCRNote = "화면 기록 권한 없음"
-            ocrAttempts = maxOCRAttempts
+            nextOCRAt = Date().addingTimeInterval(3)
             return
         }
         guard let screen = NSScreen.screens.first else { return }
         ocrInFlight = true
-        ocrAttempts += 1
         let fraction = captureFraction
+        let previousHash = lastImageHash
 
         Task { [weak self] in
             do {
                 let image = try await ScreenText.captureTopStrip(of: screen, fraction: fraction)
+                let hash = ScreenText.quickHash(of: image)
+                if hash == previousHash {
+                    await MainActor.run { self?.finishOCR(nil, hash: hash, error: nil) }
+                    return
+                }
                 let result = try ScreenText.recognizeDesktopLabels(in: image, screen: screen, fraction: fraction)
-                await MainActor.run { self?.finishOCR(result, error: nil) }
+                await MainActor.run { self?.finishOCR(result, hash: hash, error: nil) }
             } catch {
-                await MainActor.run { self?.finishOCR(nil, error: error) }
+                await MainActor.run { self?.finishOCR(nil, hash: previousHash, error: error) }
             }
         }
     }
 
-    private func finishOCR(_ result: ScreenText.Result?, error: Error?) {
+    private func finishOCR(_ result: ScreenText.Result?, hash: Int, error: Error?) {
         ocrInFlight = false
-        nextOCRAt = Date().addingTimeInterval(0.3)
+        nextOCRAt = Date().addingTimeInterval(pollInterval)
 
-        guard let result else {
-            lastOCRNote = "캡처/인식 실패: \(error?.localizedDescription ?? "알 수 없음")"
+        if let error {
+            lastOCRNote = "캡처/인식 실패: \(error.localizedDescription)"
             return
         }
+        guard let result else {
+            // 화면이 그대로면 상태도 그대로
+            skippedSameImage += 1
+            return
+        }
+        lastImageHash = hash
+        ocrRuns += 1
         lastOCRTexts = Array(result.allText.prefix(20))
-        lastOCRNote = "시도 \(ocrAttempts)회, 글자 \(result.allText.count)개, 데스크탑 라벨 \(result.labels.count)개"
-        guard !result.labels.isEmpty, wasOpen else { return }
+        lastOCRNote = "인식 \(ocrRuns)회 (같은 화면 건너뜀 \(skippedSameImage)회), 마지막: 글자 \(result.allText.count)개, 데스크탑 라벨 \(result.labels.count)개"
+
+        guard !result.labels.isEmpty else {
+            if isShowing {
+                log("라벨 줄이 사라짐 → 이름표 제거")
+                hide()
+            }
+            return
+        }
 
         let byNumber = Dictionary(
             spaces.spaces.compactMap { space in space.number.map { ($0, space) } },
@@ -296,20 +198,35 @@ final class MissionControlOverlay {
             ? "없음 (인식한 라벨 \(result.labels.map(\.text).joined(separator: ", ")) 중 이름이 지정된 것이 없음)"
             : labels.map { "\($0.text) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY)))" }.joined(separator: ", ")
 
-        // 라벨은 찾았지만 이름이 없는 경우도 "완료"로 보고 더 시도하지 않는다.
-        ocrAttempts = maxOCRAttempts
-        guard !labels.isEmpty else { return }
-        rebuildPanels(with: labels)
-        currentLabels = labels
+        if !isShowing {
+            foundCount += 1
+            lastFoundAt = Date()
+            log("라벨 줄 발견 (\(result.labels.count)개) → 이름표 \(labels.count)개 표시")
+        }
+        guard !labels.isEmpty else {
+            if isShowing { hide() }
+            return
+        }
+        if !isShowing || labels != currentLabels {
+            rebuildPanels(with: labels)
+            currentLabels = labels
+        }
         isShowing = true
-        log("이름표 \(labels.count)개 표시")
     }
 
-    private static func describeDockWindows() -> String {
-        let windows = DockAccessibility.dockWindows()
-        guard !windows.isEmpty else { return "없음" }
-        return windows.map { "\($0.name.isEmpty ? "(이름 없음)" : $0.name) \(Int($0.frame.width))×\(Int($0.frame.height)) layer \($0.layer)" }
-            .joined(separator: ", ")
+    /// 이름표를 지우고, 닫히는 애니메이션 동안 다시 그리지 않도록 다음 확인을 잠깐 미룬다.
+    private func dismiss(reason: String) {
+        guard isShowing else { return }
+        log("\(reason)으로 이름표 제거")
+        hide()
+        nextOCRAt = Date().addingTimeInterval(0.8)
+    }
+
+    private func log(_ message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.S"
+        events.append("\(formatter.string(from: Date())) \(message)")
+        if events.count > 30 { events.removeFirst(events.count - 30) }
     }
 
     // MARK: - 진단
@@ -323,17 +240,13 @@ final class MissionControlOverlay {
         lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
         lines.append("오버레이 실행 중: \(isRunning ? "예" : "아니오") (검사 \(tickCount)회)")
-        lines.append("Mission Control 열림 감지: \(openCount)회, 마지막 \(lastOpenAt.map { formatter.string(from: $0) } ?? "없음")")
         lines.append("글자 인식: \(lastOCRNote)")
         if !lastOCRTexts.isEmpty {
             lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))
         }
+        lines.append("라벨 줄 발견: \(foundCount)회, 마지막 \(lastFoundAt.map { formatter.string(from: $0) } ?? "없음")")
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
-        lines.append("지금 Dock 창: \(Self.describeDockWindows())")
-        lines.append("WindowServer 알림 등록 결과: \(registerNote) (0이면 성공)")
-        lines.append("지금 시스템 창: \(DockAccessibility.windowServerSignature())")
-        lines.append("지금 메뉴 막대 아이콘 창: \(Self.statusWindowNote())")
-        lines.append("지금 열림 판정: \((wsOpen || dockWasFront || menuBarWasHidden) ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
+        lines.append("이름표 표시 중: \(isShowing ? "예" : "아니오")")
         if !events.isEmpty {
             lines.append("기록:")
             lines.append(contentsOf: events.map { "  " + $0 })
