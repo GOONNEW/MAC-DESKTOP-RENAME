@@ -24,6 +24,9 @@ final class TrackpadMonitor {
     /// 찾아낸 자리 (nil이면 아직 탐색 중)
     private static var layout: (stride: Int, yOffset: Int)?
     private static var probeFrames = 0
+    /// 후보별로 연속으로 맞은 횟수. 충분히 쌓여야 확정한다.
+    private static var candidateScores: [Int: Int] = [:]
+    private static let scoreToConfirm = 12
 
     // 제스처 상태
     private static var startY: Float?
@@ -58,12 +61,16 @@ final class TrackpadMonitor {
 
     /// 후보가 맞는지 본다: 모든 손가락의 x, y가 0~1 안에 들어와야 한다.
     private static func isPlausible(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> Bool {
+        var xs: [Float] = []
         for index in 0..<count {
             let base = index * candidate.stride
             let x = touches.load(fromByteOffset: base + candidate.yOffset - 4, as: Float.self)
             let y = touches.load(fromByteOffset: base + candidate.yOffset, as: Float.self)
-            guard x.isFinite, y.isFinite, x >= 0, x <= 1, y >= 0, y <= 1 else { return false }
+            guard x.isFinite, y.isFinite, x > 0.001, x < 0.999, y > 0.001, y < 0.999 else { return false }
+            xs.append(x)
         }
+        // 손가락들이 가로로 서로 떨어져 있어야 진짜 좌표다 (같은 값이 반복되면 다른 필드를 읽은 것)
+        guard let minX = xs.min(), let maxX = xs.max(), maxX - minX > 0.02 else { return false }
         return true
     }
 
@@ -86,13 +93,21 @@ final class TrackpadMonitor {
             return 0
         }
 
-        // 아직 자리를 못 찾았으면, 손가락 2개 이상일 때 후보를 시험한다
+        // 아직 자리를 못 찾았으면 후보를 점수로 가린다. 손가락이 많을수록 판별력이 높다.
         if layout == nil {
             probeFrames += 1
-            guard count >= 2 else { return 0 }
-            for candidate in candidates where isPlausible(touches, count: count, candidate: candidate) {
-                layout = candidate
-                break
+            guard count >= 3 else { return 0 }
+            for (index, candidate) in candidates.enumerated() {
+                if isPlausible(touches, count: count, candidate: candidate) {
+                    let score = (candidateScores[index] ?? 0) + 1
+                    candidateScores[index] = score
+                    if score >= scoreToConfirm {
+                        layout = candidate
+                        break
+                    }
+                } else {
+                    candidateScores[index] = 0
+                }
             }
             guard layout != nil else { return 0 }
         }
@@ -165,6 +180,8 @@ final class TrackpadMonitor {
         devices.removeAll()
         Self.startY = nil
         Self.fired = false
+        Self.layout = nil
+        Self.candidateScores.removeAll()
         note = "정지"
     }
 

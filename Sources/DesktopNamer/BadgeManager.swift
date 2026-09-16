@@ -324,6 +324,8 @@ final class BadgeManager {
         var queue = targets
         var succeeded: [Int] = []
         var failed: [Int] = []
+        /// 단축키가 안 먹으면 직접 전환으로 바꾼다
+        var useDirect = false
 
         func finish() {
             if let origin { SpaceSwitcher.switchTo(number: origin) }
@@ -334,34 +336,50 @@ final class BadgeManager {
                 var message = "데스크탑 \(total)개 중 \(ready)개에 이름을 준비했습니다."
                 if !failed.isEmpty {
                     message += "\n\n전환하지 못한 데스크탑: \(failed.map(String.init).joined(separator: ", "))"
-                    message += "\n\n시스템 설정 > 키보드 > 키보드 단축키 > Mission Control에서 \"데스크탑 \(failed[0])(으)로 전환\"이 켜져 있는지 확인해 주세요. 켤 수 없다면, 각 데스크탑으로 직접 이동만 해도 그때 이름이 만들어집니다."
+                    message += "\n\n각 데스크탑으로 직접 이동만 해도 그때 이름이 만들어집니다. 세 손가락으로 좌우로 쓸어 한 번씩 들러 주세요."
                 }
                 self.log("준비 완료: 성공 \(succeeded.count), 실패 \(failed.count)")
                 completion(message)
             }
         }
 
-        func step() {
-            guard let number = queue.first else { finish(); return }
-            queue.removeFirst()
-            SpaceSwitcher.switchTo(number: number)
+        func attempt(_ number: Int, retry: Bool) {
+            if useDirect {
+                if let space = spaces.spaces.first(where: { $0.number == number }) {
+                    SkyLight.switchDirectly(to: space.id, onDisplay: space.displayID)
+                }
+            } else {
+                SpaceSwitcher.switchTo(number: number)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
                 guard let self else { return }
                 self.spaces.refresh()
-                // 실제로 그 데스크탑으로 갔는지 확인한다
                 if let active = self.spaces.activeSpace, active.number == number {
                     self.ensureBadge(for: active)
                     succeeded.append(number)
-                } else {
-                    failed.append(number)
-                    // 전환이 계속 실패하면 더 시도하지 않는다
-                    if failed.count >= 2 {
-                        failed.append(contentsOf: queue)
-                        queue.removeAll()
-                    }
+                    step()
+                    return
+                }
+                // 단축키가 안 먹은 것 같으면 직접 전환으로 한 번 더 시도한다
+                if retry, !useDirect, SkyLight.canSwitchDirectly {
+                    useDirect = true
+                    self.log("단축키 전환 실패 → 직접 전환으로 변경")
+                    attempt(number, retry: false)
+                    return
+                }
+                failed.append(number)
+                if failed.count >= 2 {
+                    failed.append(contentsOf: queue)
+                    queue.removeAll()
                 }
                 step()
             }
+        }
+
+        func step() {
+            guard let number = queue.first else { finish(); return }
+            queue.removeFirst()
+            attempt(number, retry: true)
         }
         step()
     }

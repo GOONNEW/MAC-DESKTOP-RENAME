@@ -74,6 +74,19 @@ enum SkyLight {
             .joined(separator: ", ")
     }
 
+    private typealias SetCurrentSpaceFn = @convention(c) (CGSConnectionID, CFString, CGSSpaceID) -> Void
+    private static let setCurrentSpace = symbol("CGSManagedDisplaySetCurrentSpace", as: SetCurrentSpaceFn.self)
+
+    static var canSwitchDirectly: Bool { setCurrentSpace != nil }
+
+    /// 공간을 직접 전환한다. Dock과 상태가 어긋날 수 있어, 배지 준비처럼 잠깐 도는 용도로만 쓴다.
+    @discardableResult
+    static func switchDirectly(to spaceID: CGSSpaceID, onDisplay displayID: String) -> Bool {
+        guard let cid = connection, let fn = setCurrentSpace else { return false }
+        fn(cid, displayID as CFString, spaceID)
+        return true
+    }
+
     /// 창이 속한 공간 ID 목록 (보통 1개, "모든 데스크탑" 창은 여러 개)
     static func spaceIDs(forWindow windowID: CGWindowID) -> [CGSSpaceID] {
         guard let cid = connection, let fn = copySpacesForWindows,
