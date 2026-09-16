@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 typealias CGSConnectionID = Int32
 typealias CGSSpaceID = UInt64
