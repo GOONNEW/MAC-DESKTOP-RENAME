@@ -7,16 +7,19 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let names: NameStore
     private let settings: AppSettings
     private let onRename: () -> Void
+    private let onDiagnose: () -> Void
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private var cancellables = Set<AnyCancellable>()
 
-    init(spaces: SpaceManager, names: NameStore, settings: AppSettings, onRename: @escaping () -> Void) {
+    init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
+         onRename: @escaping () -> Void, onDiagnose: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
         self.onRename = onRename
+        self.onDiagnose = onDiagnose
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -92,6 +95,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         login.state = settings.launchAtLogin ? .on : .off
         menu.addItem(login)
 
+        let diagnose = NSMenuItem(title: "문제 진단…", action: #selector(diagnose(_:)), keyEquivalent: "")
+        diagnose.target = self
+        menu.addItem(diagnose)
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -108,6 +115,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func rename(_ sender: Any?) {
         onRename()
+    }
+
+    @objc private func diagnose(_ sender: Any?) {
+        onDiagnose()
     }
 
     @objc private func toggleOverlay(_ sender: Any?) {

@@ -27,28 +27,56 @@ enum DockAccessibility {
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
-    /// Mission Control이 열려 있으면 공간 버튼 목록, 아니면 nil.
+    struct Scan {
+        /// Mission Control이 열려 있으면 공간 버튼 목록, 아니면 nil.
+        let buttons: [SpaceButton]?
+        /// 진단용 메모
+        let note: String
+    }
+
     static func spaceButtons() -> [SpaceButton]? {
+        scan().buttons
+    }
+
+    static func scan() -> Scan {
         guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
-            return nil
+            return Scan(buttons: nil, note: "Dock 프로세스를 찾지 못함")
         }
         let app = AXUIElementCreateApplication(dock.processIdentifier)
-        guard let children = attribute(app, kAXChildrenAttribute) as? [AXUIElement] else { return nil }
+        var childrenRef: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &childrenRef)
+        guard error == .success, let children = childrenRef as? [AXUIElement] else {
+            return Scan(buttons: nil, note: "Dock 접근성 트리를 읽지 못함 (AXError \(error.rawValue))")
+        }
 
+        let ids = children.map { identifier(of: $0) ?? "?" }
         let groups = children.filter { identifier(of: $0) == "mc" }
-        guard !groups.isEmpty else { return nil }
+        guard !groups.isEmpty else {
+            return Scan(buttons: nil, note: "Mission Control 그룹(mc) 없음. Dock 최상위 항목: \(ids.joined(separator: ", "))")
+        }
 
         var buttons: [SpaceButton] = []
+        var notes: [String] = []
         for group in groups {
-            guard let list = findDescendant(of: group, identifier: "mc.spaces.list", maxDepth: 4),
-                  let items = attribute(list, kAXChildrenAttribute) as? [AXUIElement] else { continue }
+            guard let list = findDescendant(of: group, identifier: "mc.spaces.list", maxDepth: 4) else {
+                notes.append("mc 그룹 안에서 mc.spaces.list를 찾지 못함")
+                continue
+            }
+            guard let items = attribute(list, kAXChildrenAttribute) as? [AXUIElement] else {
+                notes.append("mc.spaces.list의 자식을 읽지 못함")
+                continue
+            }
             for item in items {
-                guard let rect = frame(of: item) else { continue }
+                guard let rect = frame(of: item) else {
+                    notes.append("버튼 위치를 읽지 못함")
+                    continue
+                }
                 let description = attribute(item, kAXDescriptionAttribute) as? String ?? ""
                 buttons.append(SpaceButton(frame: rect, description: description))
             }
         }
-        return buttons
+        let note = notes.isEmpty ? "mc 그룹 \(groups.count)개, 버튼 \(buttons.count)개" : notes.joined(separator: "; ")
+        return Scan(buttons: buttons, note: note)
     }
 
     // MARK: - AX helpers

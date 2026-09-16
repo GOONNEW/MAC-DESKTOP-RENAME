@@ -45,6 +45,10 @@ open build/DesktopNamer.app
 | `DockAccessibility.swift` | Mission Control 중 Dock 접근성 트리에서 썸네일 위치 읽기 |
 | `MissionControlOverlay.swift` | 이름표 오버레이 패널 |
 
+## 다시 빌드한 뒤 접근성 권한이 안 먹을 때
+
+이 앱은 정식 개발자 서명 없이 ad-hoc 서명하므로, 다시 빌드하면 macOS가 다른 앱으로 취급해 손쉬운 사용 권한이 무효화됩니다. 시스템 설정에는 켜진 것으로 보여도 실제로는 권한이 없습니다. 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용에서 DesktopNamer를 선택해 빼기(-) 버튼으로 지운 뒤, 앱을 다시 실행해 새로 추가하세요. 메뉴의 `문제 진단…`에서 현재 권한 상태와 Mission Control 감지 결과를 볼 수 있습니다.
+
 ## 알려진 제한
 
 - 이름표는 원래 라벨을 "덮는" 것이므로 위치가 어긋나면 `MissionControlOverlay.swift`의 `labelBottomInset` 값을 조정하세요.

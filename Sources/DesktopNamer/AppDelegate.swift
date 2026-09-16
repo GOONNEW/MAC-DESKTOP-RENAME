@@ -27,7 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spaces: spaceManager,
             names: nameStore,
             settings: settings,
-            onRename: { [weak self] in self?.renameWindow?.show() }
+            onRename: { [weak self] in self?.renameWindow?.show() },
+            onDiagnose: { [weak self] in self?.showDiagnostics() }
         )
 
         spaceManager.start()
@@ -46,6 +47,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 enabled ? overlay.start() : overlay.stop()
             }
             .store(in: &cancellables)
+    }
+
+    /// 진단 정보를 보여주고 클립보드로 복사할 수 있게 한다.
+    private func showDiagnostics() {
+        guard let overlay else { return }
+        let text = overlay.diagnostics()
+        let alert = NSAlert()
+        alert.messageText = "문제 진단"
+        alert.informativeText = "Mission Control을 2초쯤 열었다가 닫은 뒤 이 창을 열면 감지 결과가 채워집니다.\n\n" + text
+        alert.addButton(withTitle: "복사하고 닫기")
+        alert.addButton(withTitle: "닫기")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
