@@ -16,6 +16,8 @@ enum ScreenText {
         let labels: [Label]
         /// 인식된 모든 글자 (진단용)
         let allText: [String]
+        /// 인식된 모든 글자의 화면 위치 (우리 이름표가 찍혔는지 판단용)
+        let allFrames: [CGRect]
     }
 
     /// 캡처할 화면 위쪽 띠
@@ -70,15 +72,11 @@ enum ScreenText {
 
         var labels: [Label] = []
         var allText: [String] = []
+        var allFrames: [CGRect] = []
         for observation in request.results ?? [] {
             guard let candidate = observation.topCandidates(1).first else { continue }
             let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-            allText.append(text)
-            let range = NSRange(text.startIndex..., in: text)
-            guard let match = regex.firstMatch(in: text, range: range),
-                  let numberRange = Range(match.range(at: 2), in: text),
-                  let number = Int(text[numberRange]) else { continue }
-            // 관심 영역 기준 정규화 좌표 → 이미지 픽셀 좌표(아래 원점)
+            // 관심 영역 기준 정규화 좌표 → 이미지 픽셀 좌표(아래 원점) → 화면 좌표
             let pixelRect = VNImageRectForNormalizedRectUsingRegionOfInterest(observation.boundingBox, width, height, regionOfInterest)
             let frame = CGRect(
                 x: strip.screen.frame.minX + pixelRect.minX / scale,
@@ -86,9 +84,15 @@ enum ScreenText {
                 width: pixelRect.width / scale,
                 height: pixelRect.height / scale
             )
+            allText.append(text)
+            allFrames.append(frame)
+            let range = NSRange(text.startIndex..., in: text)
+            guard let match = regex.firstMatch(in: text, range: range),
+                  let numberRange = Range(match.range(at: 2), in: text),
+                  let number = Int(text[numberRange]) else { continue }
             labels.append(Label(number: number, frame: frame, text: text))
         }
-        return Result(labels: filterAlignedRow(labels), allText: allText)
+        return Result(labels: filterAlignedRow(labels), allText: allText, allFrames: allFrames)
     }
 
     /// Mission Control 라벨은 같은 높이에 나란히 놓인다. 같은 높이(±8pt)에 2개 이상 모인 그룹 중 가장 큰 것만 남긴다.
@@ -146,12 +150,33 @@ final class ScreenStream: NSObject, SCStreamOutput, SCStreamDelegate {
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await stream.startCapture()
         self.stream = stream
+        self.display = display
     }
 
     func stop() {
         guard let stream else { return }
         self.stream = nil
         stream.stopCapture { _ in }
+    }
+
+    private var display: SCDisplay?
+    private(set) var excludedNote = "없음"
+
+    /// 지정한 창(우리 이름표)들을 캡처에서 제외하도록 필터를 갱신한다.
+    func excludeWindows(ids: Set<CGWindowID>) async {
+        guard let stream, let display else { return }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            let ownBundle = Bundle.main.bundleIdentifier
+            let windows = content.windows.filter {
+                ids.contains($0.windowID) || $0.owningApplication?.bundleIdentifier == ownBundle
+            }
+            let filter = SCContentFilter(display: display, excludingWindows: windows)
+            try await stream.updateContentFilter(filter)
+            excludedNote = "\(windows.count)개 제외 (요청 \(ids.count)개)"
+        } catch {
+            excludedNote = "제외 갱신 실패: \(error.localizedDescription)"
+        }
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {

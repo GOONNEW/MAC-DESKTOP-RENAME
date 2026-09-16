@@ -26,6 +26,8 @@ final class MissionControlOverlay {
 
     private let stream = ScreenStream()
     private let trigger = MissionControlTrigger()
+    private let trackpad = TrackpadMonitor()
+    private var trackpadWorks = false
     private var strip: ScreenText.Strip?
     private var running = false
     private var housekeeping: Timer?
@@ -106,8 +108,16 @@ final class MissionControlOverlay {
             }
         }
 
+        // 트랙패드 손가락 개수 (세 손가락 이상일 때만 감시 시작)
+        TrackpadMonitor.onTouchCountChanged = { [weak self] count in
+            if count >= 3 { self?.wake(reason: "트랙패드 \(count)손가락") }
+        }
+        trackpadWorks = trackpad.startMonitoring()
+        if !trackpadWorks { log("트랙패드 감시 실패: \(trackpad.note) → 제스처 이벤트로 대체") }
+
+        // 키보드 (트랙패드 감시가 안 되면 제스처 이벤트도 포함)
         trigger.onTrigger = { [weak self] reason in self?.wake(reason: reason) }
-        if !trigger.start() {
+        if !trigger.start(includeGestures: !trackpadWorks) {
             log("동작 감지 시작 실패: \(trigger.lastNote)")
         }
 
@@ -140,6 +150,7 @@ final class MissionControlOverlay {
         housekeeping?.invalidate()
         housekeeping = nil
         trigger.stop()
+        trackpad.stopMonitoring()
         stream.stop()
         if let spaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
@@ -298,10 +309,13 @@ final class MissionControlOverlay {
 
         guard !result.labels.isEmpty else {
             if isShowing {
-                // 원래 라벨 대신 우리 이름표 글자가 읽혔다면 아직 열려 있는 것
-                let ownTexts = Set(panelLabels.map(\.text))
-                let seenOwn = result.allText.filter { ownTexts.contains($0) }.count
-                if seenOwn >= min(2, ownTexts.count), !ownTexts.isEmpty { return }
+                // 우리 이름표 자리에서 글자가 읽혔다면(이름표가 캡처에 찍힌 것) 아직 열려 있는 것
+                let ownFrames = panelLabels.map(\.frame)
+                let onOwn = result.allFrames.filter { frame in ownFrames.contains { $0.intersects(frame) } }.count
+                if onOwn >= 1 {
+                    watchUntil = Date().addingTimeInterval(3)
+                    return
+                }
                 log("라벨 줄이 사라짐 → 이름표 제거")
                 hide()
             }
@@ -423,7 +437,8 @@ final class MissionControlOverlay {
         lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
         lines.append("오버레이 실행 중: \(running ? "예" : "아니오"), 감시 모드: \(alwaysWatch ? "항상" : "동작 감지 시"), 화면 스트림: \(stream.isRunning ? "동작" : "정지")")
-        lines.append("동작 감지: \(trigger.lastNote), 마지막 감지: \(lastTriggerNote), 마지막 제스처 손가락 수: \(trigger.lastTouchCount)")
+        lines.append("동작 감지: 트랙패드 \(trackpad.note) / 키보드 \(trigger.lastNote), 마지막 감지: \(lastTriggerNote)")
+        lines.append("캡처 제외: \(stream.excludedNote)")
         lines.append("글자 인식: \(lastOCRNote)")
         if !lastOCRTexts.isEmpty {
             lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))
@@ -500,6 +515,16 @@ final class MissionControlOverlay {
             panel.contentView = pill
             panel.orderFrontRegardless()
             panels.append(panel)
+        }
+        updateCaptureExclusion()
+    }
+
+    /// 이름표 창들을 화면 스트림의 제외 목록에 넣는다 (캡처에 찍히면 원래 라벨을 가려 오판한다)
+    private func updateCaptureExclusion() {
+        var ids = Set(panels.map { CGWindowID($0.windowNumber) })
+        if let anchorWindow { ids.insert(CGWindowID(anchorWindow.windowNumber)) }
+        Task { [weak self] in
+            await self?.stream.excludeWindows(ids: ids)
         }
     }
 

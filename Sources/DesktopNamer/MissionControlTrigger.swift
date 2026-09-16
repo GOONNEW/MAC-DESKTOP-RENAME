@@ -21,11 +21,13 @@ final class MissionControlTrigger {
     private static let swipe: UInt32 = 31
 
     @discardableResult
-    func start() -> Bool {
+    func start(includeGestures: Bool) -> Bool {
         guard tap == nil else { return true }
         var mask: CGEventMask = 1 << CGEventType.keyDown.rawValue
-        for type in [Self.beginGesture, Self.gesture, Self.magnify, Self.swipe] {
-            mask |= 1 << CGEventMask(type)
+        if includeGestures {
+            for type in [Self.beginGesture, Self.gesture, Self.magnify, Self.swipe] {
+                mask |= 1 << CGEventMask(type)
+            }
         }
         let callback: CGEventTapCallBack = { _, type, event, userInfo in
             if let userInfo {
@@ -53,7 +55,7 @@ final class MissionControlTrigger {
         self.source = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        lastNote = "감시 중 (키보드, 트랙패드 제스처)"
+        lastNote = includeGestures ? "감시 중 (키보드, 트랙패드 제스처)" : "감시 중 (키보드)"
         return true
     }
 
