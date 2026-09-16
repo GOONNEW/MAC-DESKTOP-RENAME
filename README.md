@@ -42,6 +42,19 @@ open build                      # Finder에서 build 폴더를 연 뒤 DesktopNa
 ./scripts/update.sh
 ```
 
+## 설치 파일(DMG) 만들기
+
+```bash
+./scripts/make-dmg.sh          # dist/DesktopNamer-0.1.0.dmg 생성
+./scripts/make-dmg.sh 0.2.0    # 버전을 지정할 수도 있습니다
+```
+
+DMG 안에는 앱과 응용 프로그램 폴더 바로가기, 설치 안내가 들어갑니다. 앱을 끌어다 놓아 설치합니다.
+
+**이 DMG는 Apple 공증(notarization)을 받지 않았습니다.** 다른 Mac에서 처음 열 때 "확인되지 않은 개발자" 경고가 뜹니다. 앱 아이콘을 control 키를 누른 채 클릭하고 "열기"를 선택하면 실행됩니다. 경고 없이 배포하려면 연간 99달러의 Apple Developer Program 등록과 공증 절차가 필요합니다.
+
+또한 이 앱은 손쉬운 사용 권한을 쓰는데, 설치 위치가 바뀌면 권한을 다시 허용해야 합니다.
+
 ## 사용
 
 1. 앱을 실행하면 메뉴 막대 오른쪽에 격자 아이콘과 현재 데스크탑 이름이 보입니다.
