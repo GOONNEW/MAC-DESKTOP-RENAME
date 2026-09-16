@@ -133,6 +133,11 @@ final class BadgeManager {
 
     // MARK: - 보이기/숨기기
 
+    /// 앱 전환 화면처럼 Mission Control이 아닌 상태에서는 바로 숨긴다
+    func hideForAppSwitcher() {
+        hide(reason: "앱 전환 화면")
+    }
+
     /// Mission Control이 열릴 것 같을 때: 잠깐 뒤(애니메이션이 시작될 즈음) 배지를 보이게 한다.
     func show(reason: String) {
         guard running, !isVisible else { return }
@@ -277,8 +282,8 @@ final class BadgeManager {
         panel.hidesOnDeactivate = false
         panel.alphaValue = 0
         panel.isReleasedWhenClosed = false
-        // 배경화면 바로 위, 일반 창 아래층에 둔다. 앱 전환 화면 등에서 창을 가리지 않는다.
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+        // 창 위에 떠야 썸네일에서 확실히 보인다. 평소엔 완전히 투명이라 방해하지 않는다.
+        panel.level = .floating
         // 이 데스크탑에만 속하게 한다. moveToActiveSpace/canJoinAllSpaces가 없어야 따라다니지 않는다.
         panel.collectionBehavior = [.stationary, .ignoresCycle]
         // 앱이 활성화될 때 창을 현재 데스크탑으로 끌어오지 않도록
