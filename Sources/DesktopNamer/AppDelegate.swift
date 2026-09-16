@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] uuids in self?.nameStore.prune(keeping: uuids) }
             .store(in: &cancellables)
 
+        settings.$alwaysWatch
+            .sink { [weak self] always in self?.overlay?.alwaysWatch = always }
+            .store(in: &cancellables)
+
         // 오버레이 설정 반영
         settings.$overlayEnabled
             .sink { [weak self] enabled in

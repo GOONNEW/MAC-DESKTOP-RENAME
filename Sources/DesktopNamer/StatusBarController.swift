@@ -119,6 +119,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         overlay.state = settings.overlayEnabled ? .on : .off
         menu.addItem(overlay)
 
+        let always = NSMenuItem(title: "화면 항상 감시 (더 빠름, 화면 기록 표시가 계속 뜸)", action: #selector(toggleAlwaysWatch(_:)), keyEquivalent: "")
+        always.target = self
+        always.state = settings.alwaysWatch ? .on : .off
+        always.isEnabled = settings.overlayEnabled
+        always.indentationLevel = 1
+        menu.addItem(always)
+
         let login = NSMenuItem(title: "로그인 시 자동 실행", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         login.target = self
         login.state = settings.launchAtLogin ? .on : .off
@@ -179,6 +186,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleOverlay(_ sender: Any?) {
         settings.overlayEnabled.toggle()
+    }
+
+    @objc private func toggleAlwaysWatch(_ sender: Any?) {
+        settings.alwaysWatch.toggle()
     }
 
     @objc private func toggleLaunchAtLogin(_ sender: Any?) {

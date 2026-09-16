@@ -12,7 +12,8 @@ macOS Mission Control의 "데스크탑 N"에 내가 정한 이름을 붙이는 �
 macOS는 Mission Control의 데스크탑 이름을 바꾸는 공개 API를 제공하지 않습니다. 이 앱은 비공개 SkyLight API로 공간 목록과 현재 공간을 읽고, 화면 위쪽 띠를 ScreenCaptureKit 스트림으로 받아 프레임이 바뀔 때마다 Vision으로 "데스크탑 N" 라벨 줄을 찾아 그 자리에 작은 패널로 이름표를 그립니다. 최신 macOS에서는 Mission Control이 열려도 앱이 관찰할 수 있는 상태(Dock 접근성 트리, 창 목록, WindowServer 알림, 메뉴 막대)가 변하지 않아서, 화면을 직접 보는 방식만 남았습니다. 화면이 바뀌지 않으면 프레임이 오지 않아 인식도 하지 않습니다. 그래서:
 
 - 비공개 API를 쓰므로 App Store 배포는 불가하고, macOS 대규모 업데이트 뒤 동작이 바뀔 수 있습니다.
-- 오버레이 기능은 **손쉬운 사용 권한**과 **화면 기록 권한**이 필요하고, 켜 두면 메뉴 막대에 화면 기록 표시가 보일 수 있습니다.
+- 오버레이 기능은 **손쉬운 사용 권한**과 **화면 기록 권한**이 필요합니다.
+- 화면 감시는 기본적으로 Mission Control을 여는 동작(⌃↑, Mission Control 키, 트랙패드 제스처)이 감지될 때만 몇 초간 켭니다. 메뉴의 `화면 항상 감시`를 켜면 더 빨리 뜨지만 메뉴 막대에 화면 기록 표시가 계속 보입니다.
 - 메뉴 막대 표시와 이름 저장은 오버레이 없이도 동작합니다.
 - macOS 14 이상이 필요합니다.
 
@@ -52,7 +53,8 @@ open build                      # Finder에서 build 폴더를 연 뒤 DesktopNa
 | `StatusBarController.swift` | 메뉴 막대 항목과 메뉴 |
 | `RenameWindow.swift` | 이름 편집 창 (SwiftUI) |
 | `DockAccessibility.swift` | 접근성 권한 관리, Mission Control 열림 감지, 진단 |
-| `ScreenText.swift` | 화면 위쪽 캡처와 "데스크탑 N" 글자 인식 |
+| `ScreenText.swift` | 화면 위쪽 스트림 캡처와 "데스크탑 N" 글자 인식 |
+| `MissionControlTrigger.swift` | Mission Control을 여는 키/제스처 감지 (감시 시작 신호) |
 | `MissionControlOverlay.swift` | 이름표 오버레이 패널 |
 
 ## 다시 빌드한 뒤 접근성 권한이 안 먹을 때

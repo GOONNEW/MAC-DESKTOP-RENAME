@@ -1,35 +1,57 @@
 import AppKit
+import ScreenCaptureKit
 
 /// Mission Control이 열리면 "데스크탑 N" 라벨 자리에 사용자 지정 이름을 덮어 그린다.
 ///
 /// 이 macOS에서는 Mission Control이 열려도 앱이 밖에서 관찰할 수 있는 상태가 전혀 변하지 않는다.
 /// 그래서 화면 위쪽 띠를 실시간 스트림으로 받아, 프레임이 바뀔 때마다 "데스크탑 N" 라벨 줄을 찾고
-/// 있으면 그 자리에 이름표를 그리고 없으면 지운다. 이름표가 떠 있는 동안은 라벨 줄 높이의
-/// 얇은 띠만 인식해서 썸네일 이동을 빠르게 따라간다.
+/// 있으면 그 자리에 이름표를 그리고 없으면 지운다.
+///
+/// 화면 감시는 기본적으로 Mission Control을 여는 동작(키, 제스처)이 감지될 때만 잠깐 켠다.
+/// 항상 켜 두면 메뉴 막대에 화면 기록 표시가 계속 뜨기 때문이다.
 final class MissionControlOverlay {
     private struct Label: Equatable {
+        let number: Int
         let frame: CGRect
         let text: String
+    }
+
+    private struct Tracked {
+        var label: Label
+        var lastSeen: Date
     }
 
     private let spaces: SpaceManager
     private let names: NameStore
 
     private let stream = ScreenStream()
+    private let trigger = MissionControlTrigger()
     private var strip: ScreenText.Strip?
-    private var retryTimer: Timer?
     private var running = false
+    private var housekeeping: Timer?
+
+    /// true면 화면 감시를 항상 켠다 (가장 빠르지만 화면 기록 표시가 계속 뜬다)
+    var alwaysWatch = false {
+        didSet { if running { applyWatchMode() } }
+    }
+    /// 감시를 끄기로 예정된 시각 (동작 감지 후 몇 초, 이름표가 보이는 동안은 계속 연장)
+    private var watchUntil = Date.distantPast
+    private var streamStarting = false
 
     private var panels: [NSPanel] = []
+    private var panelLabels: [Label] = []
     private var isShowing = false
-    private var currentLabels: [Label] = []
-    /// 마지막으로 찾은 라벨 줄의 세로 중심 (AppKit). 띠 인식 범위 계산에 쓴다.
+    private var tracked: [Int: Tracked] = [:]
     private var rowMidY: CGFloat?
+    /// 우리 앱이 캡처 제외 목록에 들어가도록 항상 떠 있는 1×1 창
+    private var anchorWindow: NSPanel?
 
     /// 캡처할 화면 위쪽 비율
     private let captureFraction: CGFloat = 0.3
     /// 이름표가 떠 있을 때 인식하는 띠의 절반 높이(pt)
     private let bandHalfHeight: CGFloat = 40
+    /// 인식이 놓친 이름표를 유지하는 시간
+    private let keepMissingFor: TimeInterval = 0.6
 
     // 인식 상태 (스트림 큐에서만 접근)
     private var processing = false
@@ -52,7 +74,7 @@ final class MissionControlOverlay {
     private var lastOCRNote = "아직 실행 안 됨"
     private var lastOCRTexts: [String] = []
     private var lastLabelNote = ""
-    private var lastOCRDuration: TimeInterval = 0
+    private var lastTriggerNote = "없음"
     private var events: [String] = []
 
     init(spaces: SpaceManager, names: NameStore) {
@@ -74,15 +96,25 @@ final class MissionControlOverlay {
         if !ScreenText.hasScreenCaptureAccess {
             ScreenText.requestScreenCaptureAccess()
         }
+        makeAnchorWindow()
 
         stream.onFrame = { [weak self] buffer in self?.handleFrame(buffer) }
         stream.onStop = { [weak self] error in
             DispatchQueue.main.async {
                 self?.log("스트림 중단: \(error.localizedDescription)")
-                self?.scheduleStreamStart(after: 3)
+                self?.streamStarting = false
             }
         }
-        startStream()
+
+        trigger.onTrigger = { [weak self] reason in self?.wake(reason: reason) }
+        if !trigger.start() {
+            log("동작 감지 시작 실패: \(trigger.lastNote)")
+        }
+
+        housekeeping = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.housekeep()
+        }
+        applyWatchMode()
 
         // 데스크탑/앱 전환은 Mission Control이 닫혔다는 뜻이므로 바로 지운다
         spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -105,8 +137,9 @@ final class MissionControlOverlay {
 
     func stop() {
         running = false
-        retryTimer?.invalidate()
-        retryTimer = nil
+        housekeeping?.invalidate()
+        housekeeping = nil
+        trigger.stop()
         stream.stop()
         if let spaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
@@ -119,35 +152,96 @@ final class MissionControlOverlay {
         inputMonitors.forEach { NSEvent.removeMonitor($0) }
         inputMonitors.removeAll()
         hide()
+        anchorWindow?.orderOut(nil)
+        anchorWindow = nil
+    }
+
+    /// 화면 캡처의 제외 목록은 "창을 가진 앱" 단위로 만들어지므로, 우리 앱이 늘 창 하나를 갖게 한다.
+    private func makeAnchorWindow() {
+        guard anchorWindow == nil, let screen = NSScreen.screens.first else { return }
+        let panel = NSPanel(
+            contentRect: CGRect(x: screen.frame.minX, y: screen.frame.minY, width: 1, height: 1),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = NSColor.black.withAlphaComponent(0.01)
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.level = .normal
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        panel.orderFrontRegardless()
+        anchorWindow = panel
+    }
+
+    // MARK: - 감시 모드
+
+    private func applyWatchMode() {
+        if alwaysWatch {
+            startStream()
+        } else if !isShowing, Date() > watchUntil {
+            stopStreamIfIdle()
+        }
+        log(alwaysWatch ? "항상 감시 모드" : "동작 감지 시 감시 모드")
+    }
+
+    /// Mission Control을 여는 동작이 감지되면 몇 초간 화면 감시를 켠다.
+    private func wake(reason: String) {
+        watchUntil = Date().addingTimeInterval(5)
+        if !stream.isRunning && !streamStarting {
+            lastTriggerNote = "\(reason) (\(Self.timeString(Date())))"
+            log("동작 감지: \(reason) → 감시 시작")
+            startStream()
+        }
+    }
+
+    private func housekeep() {
+        // 오래 안 보인 이름표 정리
+        if isShowing {
+            let now = Date()
+            let stale = tracked.filter { now.timeIntervalSince($0.value.lastSeen) > keepMissingFor * 3 }
+            if !stale.isEmpty {
+                stale.keys.forEach { tracked.removeValue(forKey: $0) }
+                render()
+            }
+        }
+        // 감시 끄기
+        if !alwaysWatch, stream.isRunning, !isShowing, Date() > watchUntil {
+            stopStreamIfIdle()
+        }
+    }
+
+    private func stopStreamIfIdle() {
+        guard stream.isRunning else { return }
+        stream.stop()
+        log("감시 종료")
     }
 
     private func startStream() {
-        guard running, !stream.isRunning else { return }
+        guard running, !stream.isRunning, !streamStarting else { return }
         guard ScreenText.hasScreenCaptureAccess else {
-            log("화면 기록 권한 없음 → 5초 후 재시도")
-            scheduleStreamStart(after: 5)
+            log("화면 기록 권한 없음")
             return
         }
         guard let screen = NSScreen.screens.first else { return }
         let strip = ScreenText.Strip(screen: screen, fraction: captureFraction)
         self.strip = strip
+        streamStarting = true
         Task { [weak self] in
             do {
                 try await self?.stream.start(strip: strip)
-                await MainActor.run { self?.log("화면 스트림 시작 (\(Int(strip.pixelSize.width))×\(Int(strip.pixelSize.height))px)") }
+                await MainActor.run {
+                    self?.streamStarting = false
+                    self?.log("화면 스트림 시작")
+                }
             } catch {
                 await MainActor.run {
+                    self?.streamStarting = false
                     self?.log("화면 스트림 시작 실패: \(error.localizedDescription)")
-                    self?.scheduleStreamStart(after: 5)
                 }
             }
-        }
-    }
-
-    private func scheduleStreamStart(after seconds: TimeInterval) {
-        retryTimer?.invalidate()
-        retryTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            self?.startStream()
         }
     }
 
@@ -155,7 +249,7 @@ final class MissionControlOverlay {
     func runVisibilityTest() {
         guard let screen = NSScreen.screens.first else { return }
         let frame = CGRect(x: screen.frame.midX - 60, y: screen.frame.maxY - 220, width: 120, height: 24)
-        rebuildPanels(with: [Label(frame: frame, text: "테스트 이름표")])
+        rebuildPanels(with: [Label(number: 0, frame: frame, text: "테스트 이름표")])
         isShowing = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in self?.hide() }
     }
@@ -166,7 +260,7 @@ final class MissionControlOverlay {
         guard let strip else { return }
         frameCount += 1
         if processing { return }
-        // 이름표가 없을 때는 초당 4회까지만 인식한다 (일반 화면 변화에 CPU를 쓰지 않도록)
+        // 이름표가 없을 때는 초당 6회까지만 인식한다
         let minInterval: TimeInterval = showingForQueue ? 0 : 0.15
         guard Date().timeIntervalSince(lastProcessedAt) >= minInterval else { return }
         processing = true
@@ -193,7 +287,6 @@ final class MissionControlOverlay {
     // MARK: - 결과 반영 (메인 스레드)
 
     private func finishOCR(_ result: ScreenText.Result?, startedAt: Date, duration: TimeInterval) {
-        lastOCRDuration = duration
         guard startedAt >= dismissedAt else { return } // 제거 직전에 찍은 화면은 무시
         guard let result else {
             lastOCRNote = "인식 실패"
@@ -205,62 +298,97 @@ final class MissionControlOverlay {
 
         guard !result.labels.isEmpty else {
             if isShowing {
-                // 원래 라벨 대신 우리 이름표 글자가 읽혔다면 아직 열려 있는 것 (캡처 제외가 안 된 경우 대비)
-                let ownTexts = Set(currentLabels.map(\.text))
+                // 원래 라벨 대신 우리 이름표 글자가 읽혔다면 아직 열려 있는 것
+                let ownTexts = Set(panelLabels.map(\.text))
                 let seenOwn = result.allText.filter { ownTexts.contains($0) }.count
-                if seenOwn >= min(2, ownTexts.count) { return }
+                if seenOwn >= min(2, ownTexts.count), !ownTexts.isEmpty { return }
                 log("라벨 줄이 사라짐 → 이름표 제거")
                 hide()
             }
             return
         }
 
+        // 이름표가 보이는 동안은 감시를 계속 연장한다
+        watchUntil = Date().addingTimeInterval(3)
+
         let byNumber = Dictionary(
             spaces.spaces.compactMap { space in space.number.map { ($0, space) } },
             uniquingKeysWith: { first, _ in first }
         )
-        let midYs = result.labels.map(\.frame.midY).sorted()
+        let sorted = result.labels.sorted { $0.frame.midX < $1.frame.midX }
+        let midYs = sorted.map(\.frame.midY).sorted()
         let midY = midYs[midYs.count / 2]
         let labelFont = NSFont.systemFont(ofSize: 13)
+        let nameFont = NSFont.systemFont(ofSize: 13, weight: .medium)
+        let now = Date()
 
-        var labels: [Label] = []
-        for found in result.labels {
-            guard let space = byNumber[found.number], let custom = names.customName(for: space) else { continue }
-            // 인식된 영역은 실제 글자보다 좁을 때가 있으므로, 원래 라벨 폭을 글꼴로 직접 계산해 넉넉히 덮는다
-            let originalWidth = (found.text as NSString).size(withAttributes: [.font: labelFont]).width
-            let width = max(found.frame.width, originalWidth) + 32
-            let height: CGFloat = 24
-            labels.append(Label(
-                frame: CGRect(x: found.frame.midX - width / 2, y: midY - height / 2, width: width, height: height),
-                text: custom
-            ))
+        // 줄 높이가 크게 바뀌면(접힌 줄 ↔ 펼친 썸네일) 이전 이름표는 모두 버린다
+        if let previous = rowMidY, abs(previous - midY) > 20 {
+            tracked.removeAll()
         }
-        lastLabelNote = labels.isEmpty
-            ? "없음 (인식한 라벨 \(result.labels.map(\.text).joined(separator: ", ")) 중 이름이 지정된 것이 없음)"
-            : labels.map { "\($0.text) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY)))" }.joined(separator: ", ")
-
-        // 라벨 줄은 있는데 이름 지정된 것만 못 읽은 경우(애니메이션 중 등)는 기존 이름표를 유지한다
-        guard !labels.isEmpty else { return }
-
         rowMidY = midY
+
+        var matched = 0
+        for (index, found) in sorted.enumerated() {
+            guard let space = byNumber[found.number], let custom = names.customName(for: space) else { continue }
+            matched += 1
+
+            // 옆 라벨과의 간격 안에 들어가도록 폭을 제한한다 (접힌 줄에서는 라벨이 촘촘하다)
+            var maxWidth = CGFloat.greatestFiniteMagnitude
+            if index > 0 { maxWidth = min(maxWidth, found.frame.midX - sorted[index - 1].frame.midX - 6) }
+            if index < sorted.count - 1 { maxWidth = min(maxWidth, sorted[index + 1].frame.midX - found.frame.midX - 6) }
+
+            let originalWidth = (found.text as NSString).size(withAttributes: [.font: labelFont]).width
+            let nameWidth = (custom as NSString).size(withAttributes: [.font: nameFont]).width
+            let desired = max(found.frame.width, originalWidth, nameWidth) + 28
+            let width = max(40, min(desired, maxWidth))
+            let height = max(20, min(28, found.frame.height + 8))
+            let frame = CGRect(x: found.frame.midX - width / 2, y: midY - height / 2, width: width, height: height)
+            tracked[found.number] = Tracked(label: Label(number: found.number, frame: frame, text: custom), lastSeen: now)
+        }
+
+        // 이번에 못 읽은 이름표는 잠깐 유지한다 (인식이 한 번 놓쳐도 깜빡이지 않도록)
+        let expired = tracked.filter { now.timeIntervalSince($0.value.lastSeen) > keepMissingFor }
+        expired.keys.forEach { tracked.removeValue(forKey: $0) }
+
+        lastLabelNote = tracked.isEmpty
+            ? "없음 (인식한 라벨 \(sorted.map(\.text).joined(separator: ", ")) 중 이름이 지정된 것이 없음)"
+            : tracked.values.sorted { $0.label.frame.minX < $1.label.frame.minX }
+                .map { "\($0.label.text) @ (\(Int($0.label.frame.minX)), \(Int($0.label.frame.minY))) 폭 \(Int($0.label.frame.width))" }
+                .joined(separator: ", ")
+
+        // 라벨 줄은 있는데 이름 지정된 것을 하나도 못 읽었고 유지할 것도 없으면 그대로 둔다
+        guard !tracked.isEmpty else { return }
+
         if !isShowing {
             foundCount += 1
-            lastFoundAt = Date()
-            log("라벨 줄 발견 (\(result.labels.count)개) → 이름표 \(labels.count)개 표시")
-            rebuildPanels(with: labels)
-        } else if labels.map(\.text) == currentLabels.map(\.text) {
+            lastFoundAt = now
+            log("라벨 줄 발견 (\(sorted.count)개, 이름 \(matched)개) → 표시")
+        }
+        render()
+    }
+
+    /// tracked 내용을 화면에 반영한다. 글자가 같으면 자리만 옮기고, 다르면 새로 만든다.
+    private func render() {
+        let labels = tracked.values.map(\.label).sorted { $0.frame.minX < $1.frame.minX }
+        guard !labels.isEmpty else {
+            if isShowing { hide() }
+            return
+        }
+        let sameShape = labels.count == panelLabels.count
+            && zip(labels, panelLabels).allSatisfy { $0.text == $1.text && abs($0.frame.width - $1.frame.width) < 1 && abs($0.frame.height - $1.frame.height) < 1 }
+        if isShowing, sameShape {
             movePanels(to: labels)
         } else {
             rebuildPanels(with: labels)
         }
-        currentLabels = labels
+        panelLabels = labels
         setShowing(true)
     }
 
     private func setShowing(_ showing: Bool) {
         isShowing = showing
         let midY = rowMidY
-        // 프레임 처리 큐에서 읽는 값이므로 그 큐에서 바꾼다
         stream.perform { [weak self] in
             self?.showingForQueue = showing
             self?.rowMidYForQueue = midY
@@ -276,28 +404,31 @@ final class MissionControlOverlay {
     }
 
     private func log(_ message: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.S"
-        events.append("\(formatter.string(from: Date())) \(message)")
+        events.append("\(Self.timeString(Date(), withTenths: true)) \(message)")
         if events.count > 30 { events.removeFirst(events.count - 30) }
+    }
+
+    private static func timeString(_ date: Date, withTenths: Bool = false) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = withTenths ? "HH:mm:ss.S" : "HH:mm:ss"
+        return formatter.string(from: date)
     }
 
     // MARK: - 진단
 
     func diagnostics() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
         var lines: [String] = []
         lines.append("macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)")
         lines.append("접근성 권한: \(DockAccessibility.isTrusted ? "허용됨" : "없음")")
         lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
-        lines.append("오버레이 실행 중: \(running ? "예" : "아니오"), 화면 스트림: \(stream.isRunning ? "동작" : "정지")")
+        lines.append("오버레이 실행 중: \(running ? "예" : "아니오"), 감시 모드: \(alwaysWatch ? "항상" : "동작 감지 시"), 화면 스트림: \(stream.isRunning ? "동작" : "정지")")
+        lines.append("동작 감지: \(trigger.lastNote), 마지막 감지: \(lastTriggerNote)")
         lines.append("글자 인식: \(lastOCRNote)")
         if !lastOCRTexts.isEmpty {
             lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))
         }
-        lines.append("라벨 줄 발견: \(foundCount)회, 마지막 \(lastFoundAt.map { formatter.string(from: $0) } ?? "없음")")
+        lines.append("라벨 줄 발견: \(foundCount)회, 마지막 \(lastFoundAt.map { Self.timeString($0) } ?? "없음")")
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
         lines.append("이름표 표시 중: \(isShowing ? "예" : "아니오")")
         if !events.isEmpty {
@@ -324,11 +455,12 @@ final class MissionControlOverlay {
     private func hide() {
         panels.forEach { $0.orderOut(nil) }
         panels.removeAll()
-        currentLabels = []
+        panelLabels = []
+        tracked.removeAll()
         setShowing(false)
     }
 
-    /// 이름표 글자가 같으면 패널을 새로 만들지 않고 자리만 옮긴다 (깜빡임 없이 따라가기)
+    /// 이름표 글자와 크기가 같으면 패널을 새로 만들지 않고 자리만 옮긴다 (깜빡임 없이 따라가기)
     private func movePanels(to labels: [Label]) {
         guard panels.count == labels.count else {
             rebuildPanels(with: labels)
@@ -349,13 +481,9 @@ final class MissionControlOverlay {
 
         // 이름표마다 딱 그 크기의 작은 패널을 만든다. 화면 전체 패널은 Mission Control 썸네일을 가린다.
         for label in labels {
-            let pill = Self.makeLabel(text: label.text, in: CGRect(origin: .zero, size: label.frame.size))
-            let origin = CGPoint(
-                x: label.frame.midX - pill.frame.width / 2,
-                y: label.frame.midY - pill.frame.height / 2
-            )
+            let pill = Self.makeLabel(text: label.text, size: label.frame.size)
             let panel = NSPanel(
-                contentRect: CGRect(origin: origin, size: pill.frame.size),
+                contentRect: CGRect(origin: label.frame.origin, size: label.frame.size),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -369,36 +497,29 @@ final class MissionControlOverlay {
             panel.sharingType = .none
             panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-            pill.frame.origin = .zero
             panel.contentView = pill
             panel.orderFrontRegardless()
             panels.append(panel)
         }
     }
 
-    /// 어두운 알약 배경 위에 흰 글씨. 원래 "데스크탑 N" 글자 위를 완전히 덮는다.
-    private static func makeLabel(text: String, in area: CGRect) -> NSView {
+    /// 어두운 알약 배경 위에 흰 글씨. 정해진 크기에 맞추고 긴 글은 …로 줄인다.
+    private static func makeLabel(text: String, size: CGSize) -> NSView {
+        let pill = NSView(frame: CGRect(origin: .zero, size: size))
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 1.0).cgColor
+        pill.layer?.cornerRadius = size.height / 2
+
         let field = NSTextField(labelWithString: text)
-        field.font = .systemFont(ofSize: 13, weight: .medium)
+        field.font = .systemFont(ofSize: min(13, size.height - 8), weight: .medium)
         field.textColor = .white
         field.alignment = .center
         field.lineBreakMode = .byTruncatingTail
-        field.sizeToFit()
-
-        let padding: CGFloat = 10
-        let width = max(field.frame.width + padding * 2, area.width)
-        let height = max(area.height, 22)
-        let pill = NSView(frame: CGRect(
-            x: area.midX - width / 2,
-            y: area.midY - height / 2,
-            width: width,
-            height: height
-        ))
-        pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 1.0).cgColor
-        pill.layer?.cornerRadius = height / 2
-
-        field.frame = CGRect(x: padding, y: (height - field.frame.height) / 2, width: width - padding * 2, height: field.frame.height)
+        field.maximumNumberOfLines = 1
+        field.cell?.truncatesLastVisibleLine = true
+        let padding: CGFloat = 8
+        let textHeight = field.font?.pointSize.rounded(.up).advanced(by: 4) ?? 17
+        field.frame = CGRect(x: padding, y: (size.height - textHeight) / 2, width: size.width - padding * 2, height: textHeight)
         pill.addSubview(field)
         return pill
     }

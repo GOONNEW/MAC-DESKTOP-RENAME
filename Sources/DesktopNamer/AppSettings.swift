@@ -4,9 +4,15 @@ import ServiceManagement
 
 final class AppSettings: ObservableObject {
     private static let overlayKey = "overlayEnabled"
+    private static let alwaysWatchKey = "alwaysWatch"
 
     @Published var overlayEnabled: Bool {
         didSet { UserDefaults.standard.set(overlayEnabled, forKey: Self.overlayKey) }
+    }
+
+    /// 화면 감시를 항상 켠다 (가장 빠르지만 메뉴 막대에 화면 기록 표시가 계속 뜬다)
+    @Published var alwaysWatch: Bool {
+        didSet { UserDefaults.standard.set(alwaysWatch, forKey: Self.alwaysWatchKey) }
     }
 
     private var isReverting = false
@@ -31,6 +37,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         overlayEnabled = UserDefaults.standard.bool(forKey: Self.overlayKey)
+        alwaysWatch = UserDefaults.standard.bool(forKey: Self.alwaysWatchKey)
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
