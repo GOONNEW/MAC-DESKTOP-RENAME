@@ -1,0 +1,33 @@
+name: Release DMG
+
+# 태그를 붙이면 DMG를 만들어 릴리스에 올린다.
+# 사용: git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 앱 빌드와 DMG 생성
+        run: |
+          chmod +x scripts/*.sh
+          VERSION="${GITHUB_REF_NAME#v}"
+          ./scripts/make-dmg.sh "${VERSION:-0.1.0}"
+          # 앱의 업데이트 기능이 찾는 고정 이름으로도 복사한다
+          cp dist/DesktopNamer-*.dmg dist/DesktopNamer.dmg
+
+      - name: 릴리스에 올리기
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/DesktopNamer.dmg
+            dist/DesktopNamer-*.dmg
+          generate_release_notes: true

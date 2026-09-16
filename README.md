@@ -44,12 +44,25 @@ open build                      # Finder에서 build 폴더를 연 뒤 DesktopNa
 
 ## 설치 파일(DMG) 만들기
 
+`v`로 시작하는 태그를 올리면 GitHub Actions가 DMG를 만들어 릴리스에 올립니다. 앱의 `최신 버전으로 업데이트…`는 그 릴리스의 `DesktopNamer.dmg`를 받아 자기 자신을 교체합니다.
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+직접 만들려면:
+
 ```bash
 ./scripts/make-dmg.sh          # dist/DesktopNamer-0.1.0.dmg 생성
 ./scripts/make-dmg.sh 0.2.0    # 버전을 지정할 수도 있습니다
 ```
 
 DMG 안에는 앱과 응용 프로그램 폴더 바로가기, 설치 안내가 들어갑니다. 앱을 끌어다 놓아 설치합니다.
+
+### 업데이트 동작
+
+앱은 실행 위치에 따라 다르게 갱신합니다. 프로젝트 폴더 안(`build/DesktopNamer.app`)에서 실행 중이면 소스를 받아 직접 빌드하고, 응용 프로그램 폴더 등 다른 위치면 최신 릴리스의 DMG를 받아 앱을 교체합니다. 어느 쪽이든 메뉴의 `최신 버전으로 업데이트…` 하나로 됩니다.
 
 **이 DMG는 Apple 공증(notarization)을 받지 않았습니다.** 다른 Mac에서 처음 열 때 "확인되지 않은 개발자" 경고가 뜹니다. 앱 아이콘을 control 키를 누른 채 클릭하고 "열기"를 선택하면 실행됩니다. 경고 없이 배포하려면 연간 99달러의 Apple Developer Program 등록과 공증 절차가 필요합니다.
 

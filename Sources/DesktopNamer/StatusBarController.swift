@@ -190,11 +190,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         login.state = settings.launchAtLogin ? .on : .off
         menu.addItem(login)
 
-        if Updater.canUpdate {
-            let update = NSMenuItem(title: "최신 버전으로 업데이트…", action: #selector(update(_:)), keyEquivalent: "")
-            update.target = self
-            menu.addItem(update)
-        }
+        let update = NSMenuItem(title: "최신 버전으로 업데이트…", action: #selector(update(_:)), keyEquivalent: "")
+        update.target = self
+        menu.addItem(update)
 
         let advanced = NSMenuItem(title: "고급", action: nil, keyEquivalent: "")
         let advancedMenu = NSMenu()
