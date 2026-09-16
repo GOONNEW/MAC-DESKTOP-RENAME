@@ -24,6 +24,12 @@ open build/DesktopNamer.app
 
 디버그 빌드는 `./scripts/build-app.sh debug`.
 
+이미 폴더가 있다면 아래 한 줄로 GitHub의 최신 코드를 받아 빌드하고 실행합니다.
+
+```bash
+./scripts/update.sh
+```
+
 ## 사용
 
 1. 앱을 실행하면 메뉴 막대 오른쪽에 격자 아이콘과 현재 데스크탑 이름이 보입니다.
