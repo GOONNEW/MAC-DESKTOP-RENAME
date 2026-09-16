@@ -37,6 +37,8 @@ final class MissionControlOverlay {
     private var axNote = ""
     private var testMode = false
     private var events: [String] = []
+    /// 데스크탑 전환으로 지운 뒤, 닫힘이 한 번 감지될 때까지 다시 그리지 않는다
+    private var suppressUntilClosed = false
     private var spaceObserver: NSObjectProtocol?
 
     init(spaces: SpaceManager, names: NameStore) {
@@ -67,7 +69,7 @@ final class MissionControlOverlay {
             guard let self, self.isShowing else { return }
             self.log("데스크탑 전환으로 이름표 제거")
             self.hide()
-            self.wasOpen = false
+            self.suppressUntilClosed = true
         }
     }
 
@@ -111,8 +113,11 @@ final class MissionControlOverlay {
                 ocrInFlight = false
             }
             wasOpen = false
+            suppressUntilClosed = false
             return
         }
+
+        if suppressUntilClosed { return }
 
         if !wasOpen {
             wasOpen = true
