@@ -118,10 +118,37 @@ enum DockAccessibility {
         var lines: [String] = []
         for group in groups {
             dump(group, depth: 0, maxDepth: 6, into: &lines)
+            if buttons.isEmpty { lines.append("  " + describeAttributes(of: group)) }
             if lines.count > 120 { break }
         }
         let tree = lines.prefix(120).joined(separator: "\n")
         return Scan(buttons: buttons, note: note, tree: tree)
+    }
+
+    /// Dock에 "확장 접근성" 신호를 보낸다. 일부 앱은 보조 기술이 이 신호를 보낼 때만 접근성 트리를 채운다.
+    static func setEnhancedAccessibility(_ enabled: Bool) -> String {
+        guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
+            return "Dock 없음"
+        }
+        let app = AXUIElementCreateApplication(dock.processIdentifier)
+        let value: CFBoolean = enabled ? kCFBooleanTrue : kCFBooleanFalse
+        let r1 = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, value)
+        let r2 = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, value)
+        return "AXEnhancedUserInterface=\(r1.rawValue), AXManualAccessibility=\(r2.rawValue)"
+    }
+
+    /// 요소가 가진 속성 이름과, 자식을 얻는 다른 경로들의 결과 (진단용)
+    static func describeAttributes(of element: AXUIElement) -> String {
+        var namesRef: CFArray?
+        let names = AXUIElementCopyAttributeNames(element, &namesRef) == .success
+            ? (namesRef as? [String] ?? []) : []
+        var parts: [String] = ["속성: " + names.joined(separator: ", ")]
+        for key in ["AXChildren", "AXVisibleChildren", "AXChildrenInNavigationOrder", "AXContents", "AXRows", "AXColumns"] {
+            if let list = attribute(element, key) as? [AXUIElement] {
+                parts.append("\(key)=\(list.count)개")
+            }
+        }
+        return parts.joined(separator: " / ")
     }
 
     /// Dock이 화면에 띄운 창 목록. Mission Control이 열리면 화면 크기의 Dock 창이 생기므로 감지 신호로 쓴다.

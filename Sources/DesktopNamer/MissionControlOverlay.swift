@@ -26,6 +26,7 @@ final class MissionControlOverlay {
     private var mcOpenTicks = 0
     private var mcOpenWithChildrenTicks = 0
     private var lastDockWindows = ""
+    private var enhancedNote = ""
 
     /// 버튼 프레임 바닥에서 라벨 중심까지의 거리. Mission Control의 라벨 위치에 맞춰 조정한다.
     private let labelBottomInset: CGFloat = 12
@@ -44,6 +45,7 @@ final class MissionControlOverlay {
             DockAccessibility.requestTrust()
             Self.showPermissionHelp()
         }
+        enhancedNote = DockAccessibility.setEnhancedAccessibility(true)
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -54,6 +56,7 @@ final class MissionControlOverlay {
         timer?.invalidate()
         timer = nil
         hide()
+        _ = DockAccessibility.setEnhancedAccessibility(false)
     }
 
     private func tick() {
@@ -107,6 +110,7 @@ final class MissionControlOverlay {
             }
         }
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
+        lines.append("Dock 확장 접근성 신호 결과: \(enhancedNote) (0이면 성공)")
         lines.append("Dock 전체 화면 창으로 본 Mission Control 열림: \(mcOpenTicks)회, 그중 mc 그룹에 내용이 있던 때: \(mcOpenWithChildrenTicks)회")
         if !lastDockWindows.isEmpty {
             lines.append("열렸을 때 Dock 창: \(lastDockWindows)")
