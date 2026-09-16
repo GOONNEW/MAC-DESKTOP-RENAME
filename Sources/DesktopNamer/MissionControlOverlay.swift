@@ -79,6 +79,8 @@ final class MissionControlOverlay {
         formatter.dateFormat = "HH:mm:ss"
         var lines: [String] = []
         lines.append("접근성 권한: \(DockAccessibility.isTrusted ? "허용됨" : "없음 (시스템 설정에서 DesktopNamer를 지운 뒤 다시 추가)")")
+        lines.append("앱 위치: \(DockAccessibility.signingInfo())")
+        lines.append("번들 ID: \(Bundle.main.bundleIdentifier ?? "없음")")
         lines.append("오버레이 실행 중: \(isRunning ? "예" : "아니오") (검사 \(tickCount)회)")
         lines.append("Mission Control 마지막 감지: \(lastDetection.map { formatter.string(from: $0) } ?? "없음")")
         lines.append("마지막 검사 메모: \(lastScanNote)")

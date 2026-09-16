@@ -96,6 +96,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         login.state = settings.launchAtLogin ? .on : .off
         menu.addItem(login)
 
+        let resetTrust = NSMenuItem(title: "접근성 권한 초기화 후 다시 요청", action: #selector(resetTrust(_:)), keyEquivalent: "")
+        resetTrust.target = self
+        menu.addItem(resetTrust)
+
         let diagnose = NSMenuItem(title: "문제 진단…", action: #selector(diagnose(_:)), keyEquivalent: "")
         diagnose.target = self
         menu.addItem(diagnose)
@@ -116,6 +120,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func rename(_ sender: Any?) {
         onRename()
+    }
+
+    @objc private func resetTrust(_ sender: Any?) {
+        let message = DockAccessibility.resetTrustAndRequest()
+        let alert = NSAlert()
+        alert.messageText = "접근성 권한"
+        alert.informativeText = message + "\n\n시스템 설정 > 개인정보 보호 및 보안에서 DesktopNamer 스위치를 켠 뒤, 앱을 종료했다가 다시 실행하세요."
+        alert.addButton(withTitle: "확인")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     @objc private func diagnose(_ sender: Any?) {

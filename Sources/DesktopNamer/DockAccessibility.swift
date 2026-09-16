@@ -27,6 +27,43 @@ enum DockAccessibility {
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
+    /// 이 앱의 접근성 권한 기록을 모두 지운 뒤 다시 요청한다.
+    /// 다시 빌드해서 오래된 항목이 남아 있을 때 쓴다. 결과 메시지를 돌려준다.
+    static func resetTrustAndRequest() -> String {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.example.desktopnamer"
+        let output = run("/usr/bin/tccutil", ["reset", "Accessibility", bundleID])
+        requestTrust()
+        return output.isEmpty ? "권한 기록을 지웠습니다. 시스템 설정에서 DesktopNamer를 켜 주세요." : output
+    }
+
+    /// 앱 번들 위치와 코드 서명 정보 (진단용)
+    static func signingInfo() -> String {
+        let path = Bundle.main.bundlePath
+        let output = run("/usr/bin/codesign", ["-dv", "--verbose=2", path])
+        let interesting = output
+            .split(separator: "\n")
+            .filter { $0.hasPrefix("Identifier=") || $0.hasPrefix("Authority=") || $0.hasPrefix("Signature=") || $0.hasPrefix("CDHash=") }
+            .joined(separator: " / ")
+        return "\(path)\n서명: \(interesting.isEmpty ? output.trimmingCharacters(in: .whitespacesAndNewlines) : interesting)"
+    }
+
+    private static func run(_ tool: String, _ arguments: [String]) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return "실행 실패: \(error.localizedDescription)"
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
     struct Scan {
         /// Mission Control이 열려 있으면 공간 버튼 목록, 아니면 nil.
         let buttons: [SpaceButton]?
