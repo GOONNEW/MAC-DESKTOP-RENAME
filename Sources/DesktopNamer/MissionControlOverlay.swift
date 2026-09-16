@@ -2,9 +2,10 @@ import AppKit
 
 /// Mission Control이 열리면 "데스크탑 N" 라벨 자리에 사용자 지정 이름을 덮어 그린다.
 ///
-/// 이 macOS에서는 Mission Control이 열려도 앱이 밖에서 관찰할 수 있는 상태(Dock 접근성 트리, 창 목록,
-/// WindowServer 알림, 메뉴 막대)가 전혀 변하지 않는다. 그래서 화면 위쪽을 주기적으로 찍어
-/// "데스크탑 N" 라벨 줄이 있는지 직접 확인하고, 있으면 그 자리에 이름표를 그리고 없으면 지운다.
+/// 이 macOS에서는 Mission Control이 열려도 앱이 밖에서 관찰할 수 있는 상태가 전혀 변하지 않는다.
+/// 그래서 화면 위쪽 띠를 실시간 스트림으로 받아, 프레임이 바뀔 때마다 "데스크탑 N" 라벨 줄을 찾고
+/// 있으면 그 자리에 이름표를 그리고 없으면 지운다. 이름표가 떠 있는 동안은 라벨 줄 높이의
+/// 얇은 띠만 인식해서 썸네일 이동을 빠르게 따라간다.
 final class MissionControlOverlay {
     private struct Label: Equatable {
         let frame: CGRect
@@ -14,36 +15,44 @@ final class MissionControlOverlay {
     private let spaces: SpaceManager
     private let names: NameStore
 
-    private var timer: Timer?
+    private let stream = ScreenStream()
+    private var strip: ScreenText.Strip?
+    private var retryTimer: Timer?
+    private var running = false
+
     private var panels: [NSPanel] = []
     private var isShowing = false
     private var currentLabels: [Label] = []
+    /// 마지막으로 찾은 라벨 줄의 세로 중심 (AppKit). 띠 인식 범위 계산에 쓴다.
+    private var rowMidY: CGFloat?
 
     /// 캡처할 화면 위쪽 비율
     private let captureFraction: CGFloat = 0.3
+    /// 이름표가 떠 있을 때 인식하는 띠의 절반 높이(pt)
+    private let bandHalfHeight: CGFloat = 40
 
-    // 인식 상태
-    private var ocrInFlight = false
-    private var nextOCRAt = Date.distantPast
-    private var lastImageHash = 0
-    private var ocrStartedAt = Date.distantPast
+    // 인식 상태 (스트림 큐에서만 접근)
+    private var processing = false
+    private var lastProcessedAt = Date.distantPast
+    private var showingForQueue = false
+    private var rowMidYForQueue: CGFloat?
+
     private var dismissedAt = Date.distantPast
 
     // 안전장치
     private var spaceObserver: NSObjectProtocol?
     private var appObserver: NSObjectProtocol?
     private var inputMonitors: [Any] = []
-    private var testMode = false
 
     // 진단 정보
-    private var tickCount = 0
+    private var frameCount = 0
     private var ocrRuns = 0
-    private var skippedSameImage = 0
     private var foundCount = 0
     private var lastFoundAt: Date?
     private var lastOCRNote = "아직 실행 안 됨"
     private var lastOCRTexts: [String] = []
     private var lastLabelNote = ""
+    private var lastOCRDuration: TimeInterval = 0
     private var events: [String] = []
 
     init(spaces: SpaceManager, names: NameStore) {
@@ -51,12 +60,13 @@ final class MissionControlOverlay {
         self.names = names
     }
 
-    var isRunning: Bool { timer != nil }
+    var isRunning: Bool { running }
 
     // MARK: - 시작/정지
 
     func start() {
-        guard timer == nil else { return }
+        guard !running else { return }
+        running = true
         if !DockAccessibility.isTrusted {
             DockAccessibility.requestTrust()
             Self.showPermissionHelp()
@@ -64,10 +74,15 @@ final class MissionControlOverlay {
         if !ScreenText.hasScreenCaptureAccess {
             ScreenText.requestScreenCaptureAccess()
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.tick()
+
+        stream.onFrame = { [weak self] buffer in self?.handleFrame(buffer) }
+        stream.onStop = { [weak self] error in
+            DispatchQueue.main.async {
+                self?.log("스트림 중단: \(error.localizedDescription)")
+                self?.scheduleStreamStart(after: 3)
+            }
         }
-        timer?.tolerance = 0.03
+        startStream()
 
         // 데스크탑/앱 전환은 Mission Control이 닫혔다는 뜻이므로 바로 지운다
         spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -89,8 +104,10 @@ final class MissionControlOverlay {
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        running = false
+        retryTimer?.invalidate()
+        retryTimer = nil
+        stream.stop()
         if let spaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
             self.spaceObserver = nil
@@ -104,84 +121,87 @@ final class MissionControlOverlay {
         hide()
     }
 
-    /// 15초 동안 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
-    func runVisibilityTest() {
-        testMode = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
-            self?.testMode = false
-            self?.hide()
-        }
-    }
-
-    // MARK: - 주기 검사
-
-    private func tick() {
-        tickCount += 1
-
-        if testMode, !isShowing, let screen = NSScreen.screens.first {
-            let frame = CGRect(x: screen.frame.midX - 60, y: screen.frame.maxY - 220, width: 120, height: 24)
-            rebuildPanels(with: [Label(frame: frame, text: "테스트 이름표")])
-            isShowing = true
-            return
-        }
-
-        guard !ocrInFlight, Date() >= nextOCRAt else { return }
-        startOCR()
-    }
-
-    /// 이름표가 떠 있을 때는 자주(썸네일 이동을 따라가기 위해), 아닐 때는 덜 자주 확인한다.
-    /// 화면이 그대로면 인식을 건너뛰므로 실제 부담은 작다.
-    private var pollInterval: TimeInterval { isShowing ? 0.3 : 0.5 }
-
-    private func startOCR() {
+    private func startStream() {
+        guard running, !stream.isRunning else { return }
         guard ScreenText.hasScreenCaptureAccess else {
-            lastOCRNote = "화면 기록 권한 없음"
-            nextOCRAt = Date().addingTimeInterval(3)
+            log("화면 기록 권한 없음 → 5초 후 재시도")
+            scheduleStreamStart(after: 5)
             return
         }
         guard let screen = NSScreen.screens.first else { return }
-        ocrInFlight = true
-        ocrStartedAt = Date()
-        let fraction = captureFraction
-        let previousHash = lastImageHash
-
+        let strip = ScreenText.Strip(screen: screen, fraction: captureFraction)
+        self.strip = strip
         Task { [weak self] in
             do {
-                let image = try await ScreenText.captureTopStrip(of: screen, fraction: fraction)
-                let hash = ScreenText.quickHash(of: image)
-                if hash == previousHash {
-                    await MainActor.run { self?.finishOCR(nil, hash: hash, error: nil) }
-                    return
-                }
-                let result = try ScreenText.recognizeDesktopLabels(in: image, screen: screen, fraction: fraction)
-                await MainActor.run { self?.finishOCR(result, hash: hash, error: nil) }
+                try await self?.stream.start(strip: strip)
+                await MainActor.run { self?.log("화면 스트림 시작 (\(Int(strip.pixelSize.width))×\(Int(strip.pixelSize.height))px)") }
             } catch {
-                await MainActor.run { self?.finishOCR(nil, hash: previousHash, error: error) }
+                await MainActor.run {
+                    self?.log("화면 스트림 시작 실패: \(error.localizedDescription)")
+                    self?.scheduleStreamStart(after: 5)
+                }
             }
         }
     }
 
-    private func finishOCR(_ result: ScreenText.Result?, hash: Int, error: Error?) {
-        ocrInFlight = false
-        nextOCRAt = Date().addingTimeInterval(pollInterval)
-        if ocrStartedAt < dismissedAt {
-            // 제거 직전에 찍은 화면이므로 무시
-            return
+    private func scheduleStreamStart(after seconds: TimeInterval) {
+        retryTimer?.invalidate()
+        retryTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            self?.startStream()
+        }
+    }
+
+    /// 15초 동안 화면 위쪽 가운데에 시험용 이름표를 띄운다 (패널이 보이는지 확인용).
+    func runVisibilityTest() {
+        guard let screen = NSScreen.screens.first else { return }
+        let frame = CGRect(x: screen.frame.midX - 60, y: screen.frame.maxY - 220, width: 120, height: 24)
+        rebuildPanels(with: [Label(frame: frame, text: "테스트 이름표")])
+        isShowing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in self?.hide() }
+    }
+
+    // MARK: - 프레임 처리 (스트림 큐)
+
+    private func handleFrame(_ buffer: CVPixelBuffer) {
+        guard let strip else { return }
+        frameCount += 1
+        if processing { return }
+        // 이름표가 없을 때는 초당 4회까지만 인식한다 (일반 화면 변화에 CPU를 쓰지 않도록)
+        let minInterval: TimeInterval = showingForQueue ? 0 : 0.25
+        guard Date().timeIntervalSince(lastProcessedAt) >= minInterval else { return }
+        processing = true
+        let started = Date()
+
+        // 이름표가 떠 있으면 라벨 줄 주변의 얇은 띠만 인식해 속도를 높인다
+        let region: CGRect
+        if showingForQueue, let midY = rowMidYForQueue {
+            region = strip.regionOfInterest(centerY: midY, halfHeight: bandHalfHeight)
+        } else {
+            region = ScreenText.fullRegion
         }
 
-        if let error {
-            lastOCRNote = "캡처/인식 실패: \(error.localizedDescription)"
-            return
+        let result = try? ScreenText.recognizeDesktopLabels(in: buffer, strip: strip, regionOfInterest: region)
+        let duration = Date().timeIntervalSince(started)
+        lastProcessedAt = Date()
+        processing = false
+
+        DispatchQueue.main.async { [weak self] in
+            self?.finishOCR(result, startedAt: started, duration: duration)
         }
+    }
+
+    // MARK: - 결과 반영 (메인 스레드)
+
+    private func finishOCR(_ result: ScreenText.Result?, startedAt: Date, duration: TimeInterval) {
+        lastOCRDuration = duration
+        guard startedAt >= dismissedAt else { return } // 제거 직전에 찍은 화면은 무시
         guard let result else {
-            // 화면이 그대로면 상태도 그대로
-            skippedSameImage += 1
+            lastOCRNote = "인식 실패"
             return
         }
-        lastImageHash = hash
         ocrRuns += 1
         lastOCRTexts = Array(result.allText.prefix(20))
-        lastOCRNote = "인식 \(ocrRuns)회 (같은 화면 건너뜀 \(skippedSameImage)회), 마지막: 글자 \(result.allText.count)개, 데스크탑 라벨 \(result.labels.count)개"
+        lastOCRNote = "인식 \(ocrRuns)회 (프레임 \(frameCount)개), 마지막: \(Int(duration * 1000))ms, 글자 \(result.allText.count)개, 데스크탑 라벨 \(result.labels.count)개"
 
         guard !result.labels.isEmpty else {
             if isShowing {
@@ -195,9 +215,8 @@ final class MissionControlOverlay {
             spaces.spaces.compactMap { space in space.number.map { ($0, space) } },
             uniquingKeysWith: { first, _ in first }
         )
-        // 라벨 줄의 세로 중심은 줄 전체의 중앙값으로 통일한다 (인식 오차로 들쭉날쭉해지는 것 방지)
         let midYs = result.labels.map(\.frame.midY).sorted()
-        let rowMidY = midYs[midYs.count / 2]
+        let midY = midYs[midYs.count / 2]
         let labelFont = NSFont.systemFont(ofSize: 13)
 
         var labels: [Label] = []
@@ -207,46 +226,52 @@ final class MissionControlOverlay {
             let originalWidth = (found.text as NSString).size(withAttributes: [.font: labelFont]).width
             let width = max(found.frame.width, originalWidth) + 32
             let height: CGFloat = 24
-            let frame = CGRect(x: found.frame.midX - width / 2, y: rowMidY - height / 2, width: width, height: height)
-            labels.append(Label(frame: frame, text: custom))
+            labels.append(Label(
+                frame: CGRect(x: found.frame.midX - width / 2, y: midY - height / 2, width: width, height: height),
+                text: custom
+            ))
         }
         lastLabelNote = labels.isEmpty
             ? "없음 (인식한 라벨 \(result.labels.map(\.text).joined(separator: ", ")) 중 이름이 지정된 것이 없음)"
             : labels.map { "\($0.text) @ (\(Int($0.frame.minX)), \(Int($0.frame.minY)))" }.joined(separator: ", ")
 
+        // 라벨 줄은 있는데 이름 지정된 것만 못 읽은 경우(애니메이션 중 등)는 기존 이름표를 유지한다
+        guard !labels.isEmpty else { return }
+
+        rowMidY = midY
         if !isShowing {
             foundCount += 1
             lastFoundAt = Date()
             log("라벨 줄 발견 (\(result.labels.count)개) → 이름표 \(labels.count)개 표시")
-        }
-        guard !labels.isEmpty else {
-            // 라벨 줄은 있는데 이름 지정된 것만 못 읽은 경우(애니메이션 중 등)는 기존 이름표를 유지한다
-            return
-        }
-        // 이미 표시 중이면 개수가 바뀌거나 8pt 넘게 움직였을 때만 다시 그린다 (미세한 흔들림 방지)
-        if !isShowing || Self.changedNoticeably(labels, currentLabels) {
             rebuildPanels(with: labels)
-            currentLabels = labels
+        } else if labels.map(\.text) == currentLabels.map(\.text) {
+            movePanels(to: labels)
+        } else {
+            rebuildPanels(with: labels)
         }
-        isShowing = true
+        currentLabels = labels
+        setShowing(true)
     }
 
-    private static func changedNoticeably(_ new: [Label], _ old: [Label]) -> Bool {
-        guard new.count == old.count else { return true }
-        for (a, b) in zip(new, old) {
-            if a.text != b.text { return true }
-            if abs(a.frame.midX - b.frame.midX) > 3 || abs(a.frame.midY - b.frame.midY) > 3 { return true }
-        }
-        return false
+    private func setShowing(_ showing: Bool) {
+        isShowing = showing
+        let midY = rowMidY
+        stream.onFrame = nil // 큐 상태 갱신 중 경쟁 방지용은 아니지만, 아래 값은 큐에서 읽으므로 async로 넘긴다
+        streamQueueUpdate(showing: showing, midY: midY)
+        stream.onFrame = { [weak self] buffer in self?.handleFrame(buffer) }
     }
 
-    /// 이름표를 지우고, 닫히는 애니메이션 동안 다시 그리지 않도록 다음 확인을 잠깐 미룬다.
+    private func streamQueueUpdate(showing: Bool, midY: CGFloat?) {
+        showingForQueue = showing
+        rowMidYForQueue = midY
+    }
+
+    /// 이름표를 지우고, 닫히는 애니메이션 동안 잠깐 다시 그리지 않는다.
     private func dismiss(reason: String) {
         guard isShowing else { return }
         log("\(reason)으로 이름표 제거")
         hide()
-        dismissedAt = Date()
-        nextOCRAt = Date().addingTimeInterval(0.8)
+        dismissedAt = Date().addingTimeInterval(0.5)
     }
 
     private func log(_ message: String) {
@@ -266,7 +291,7 @@ final class MissionControlOverlay {
         lines.append("접근성 권한: \(DockAccessibility.isTrusted ? "허용됨" : "없음")")
         lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
-        lines.append("오버레이 실행 중: \(isRunning ? "예" : "아니오") (검사 \(tickCount)회)")
+        lines.append("오버레이 실행 중: \(running ? "예" : "아니오"), 화면 스트림: \(stream.isRunning ? "동작" : "정지")")
         lines.append("글자 인식: \(lastOCRNote)")
         if !lastOCRTexts.isEmpty {
             lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))
@@ -299,7 +324,22 @@ final class MissionControlOverlay {
         panels.forEach { $0.orderOut(nil) }
         panels.removeAll()
         currentLabels = []
-        isShowing = false
+        setShowing(false)
+    }
+
+    /// 이름표 글자가 같으면 패널을 새로 만들지 않고 자리만 옮긴다 (깜빡임 없이 따라가기)
+    private func movePanels(to labels: [Label]) {
+        guard panels.count == labels.count else {
+            rebuildPanels(with: labels)
+            return
+        }
+        for (panel, label) in zip(panels, labels) {
+            let size = panel.frame.size
+            let origin = CGPoint(x: label.frame.midX - size.width / 2, y: label.frame.midY - size.height / 2)
+            if abs(panel.frame.origin.x - origin.x) > 0.5 || abs(panel.frame.origin.y - origin.y) > 0.5 {
+                panel.setFrameOrigin(origin)
+            }
+        }
     }
 
     private func rebuildPanels(with labels: [Label]) {
@@ -333,7 +373,7 @@ final class MissionControlOverlay {
         }
     }
 
-    /// 어두운 반투명 알약 배경 위에 흰 글씨. 원래 "데스크탑 N" 글자 위를 덮는다.
+    /// 어두운 알약 배경 위에 흰 글씨. 원래 "데스크탑 N" 글자 위를 완전히 덮는다.
     private static func makeLabel(text: String, in area: CGRect) -> NSView {
         let field = NSTextField(labelWithString: text)
         field.font = .systemFont(ofSize: 13, weight: .medium)

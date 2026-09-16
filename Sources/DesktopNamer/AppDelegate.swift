@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             names: nameStore,
             settings: settings,
             onRename: { [weak self] in self?.renameWindow?.show() },
+            onRenameSpace: { [weak self] space in self?.promptRename(for: space) },
             onDiagnose: { [weak self] in self?.showDiagnostics() },
             onVisibilityTest: { [weak self] in self?.overlay?.runVisibilityTest() }
         )
@@ -48,6 +49,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 enabled ? overlay.start() : overlay.stop()
             }
             .store(in: &cancellables)
+    }
+
+    /// 데스크탑 하나의 이름을 묻는 작은 입력 창
+    private func promptRename(for space: Space) {
+        let alert = NSAlert()
+        alert.messageText = "\(space.defaultName) 이름"
+        alert.informativeText = "비워 두면 기본 이름(\(space.defaultName))으로 돌아갑니다."
+        alert.addButton(withTitle: "저장")
+        alert.addButton(withTitle: "취소")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = space.defaultName
+        field.stringValue = nameStore.customName(for: space) ?? ""
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            nameStore.setName(field.stringValue, for: space)
+        }
     }
 
     /// 진단 정보를 보여주고 클립보드로 복사할 수 있게 한다.

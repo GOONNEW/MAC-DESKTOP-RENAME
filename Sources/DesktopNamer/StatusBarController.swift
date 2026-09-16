@@ -7,6 +7,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let names: NameStore
     private let settings: AppSettings
     private let onRename: () -> Void
+    private let onRenameSpace: (Space) -> Void
     private let onDiagnose: () -> Void
     private let onVisibilityTest: () -> Void
 
@@ -15,12 +16,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
-         onRename: @escaping () -> Void, onDiagnose: @escaping () -> Void,
-         onVisibilityTest: @escaping () -> Void) {
+         onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
+         onDiagnose: @escaping () -> Void, onVisibilityTest: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
         self.onRename = onRename
+        self.onRenameSpace = onRenameSpace
         self.onDiagnose = onDiagnose
         self.onVisibilityTest = onVisibilityTest
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -81,12 +83,35 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 summary: WindowInspector.summary(for: apps)
             )
             menu.addItem(item)
+
+            // ⌥ 키를 누르면 같은 자리에 "이름 바꾸기" 항목이 대신 보인다
+            if !space.isFullscreen {
+                let alternate = NSMenuItem(title: "이름 바꾸기: \(name)", action: #selector(renameSpace(_:)), keyEquivalent: "")
+                alternate.target = self
+                alternate.representedObject = space
+                alternate.isAlternate = true
+                alternate.keyEquivalentModifierMask = [.option]
+                alternate.image = item.image
+                menu.addItem(alternate)
+            }
         }
 
         menu.addItem(.separator())
 
-        let rename = NSMenuItem(title: "이름 바꾸기…", action: #selector(rename(_:)), keyEquivalent: "r")
-        rename.target = self
+        let rename = NSMenuItem(title: "이름 바꾸기", action: nil, keyEquivalent: "")
+        let renameMenu = NSMenu()
+        renameMenu.autoenablesItems = false
+        let editAll = NSMenuItem(title: "모두 편집…", action: #selector(rename(_:)), keyEquivalent: "r")
+        editAll.target = self
+        renameMenu.addItem(editAll)
+        renameMenu.addItem(.separator())
+        for space in spaces.spaces where !space.isFullscreen {
+            let item = NSMenuItem(title: "\(space.number.map { String($0) } ?? "") \(names.displayName(for: space))", action: #selector(renameSpace(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = space
+            renameMenu.addItem(item)
+        }
+        rename.submenu = renameMenu
         menu.addItem(rename)
 
         let overlay = NSMenuItem(title: "Mission Control에 이름 겹쳐 보이기", action: #selector(toggleOverlay(_:)), keyEquivalent: "")
@@ -127,6 +152,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func rename(_ sender: Any?) {
         onRename()
+    }
+
+    @objc private func renameSpace(_ sender: NSMenuItem) {
+        guard let space = sender.representedObject as? Space else { return }
+        onRenameSpace(space)
     }
 
     @objc private func resetTrust(_ sender: Any?) {
