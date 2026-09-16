@@ -52,16 +52,26 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         header.isEnabled = false
         menu.addItem(header)
 
+        spaces.refreshApps()
+
         for space in spaces.spaces {
+            let apps = spaces.apps(in: space)
             let item = NSMenuItem(title: "", action: #selector(switchSpace(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = space
             item.state = space.isActive ? .on : .off
             item.isEnabled = space.number.map(SpaceSwitcher.canSwitch(to:)) ?? false
+            item.image = WindowInspector.iconStrip(for: apps)
+
+            var name = names.displayName(for: space)
+            if space.isFullscreen, let app = apps.first {
+                name = "전체 화면: \(app.name)"
+            }
             item.attributedTitle = Self.attributedTitle(
                 number: space.number,
-                name: names.displayName(for: space),
-                isDefault: names.customName(for: space) == nil
+                name: name,
+                isDefault: names.customName(for: space) == nil,
+                summary: WindowInspector.summary(for: apps)
             )
             menu.addItem(item)
         }
@@ -110,7 +120,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     // MARK: - Drawing helpers
 
-    private static func attributedTitle(number: Int?, name: String, isDefault: Bool) -> NSAttributedString {
+    private static func attributedTitle(number: Int?, name: String, isDefault: Bool, summary: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let font = NSFont.menuFont(ofSize: 0)
         let numberText = number.map { String($0) } ?? "—"
@@ -122,6 +132,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             .font: font,
             .foregroundColor: isDefault ? NSColor.secondaryLabelColor : NSColor.labelColor,
         ]))
+        if !summary.isEmpty {
+            result.append(NSAttributedString(string: "   " + summary, attributes: [
+                .font: NSFont.menuFont(ofSize: font.pointSize - 2),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]))
+        }
         return result
     }
 

@@ -9,6 +9,10 @@ enum SkyLight {
     private typealias MainConnectionFn = @convention(c) () -> CGSConnectionID
     private typealias CopyManagedDisplaySpacesFn = @convention(c) (CGSConnectionID) -> Unmanaged<CFArray>?
     private typealias GetActiveSpaceFn = @convention(c) (CGSConnectionID) -> CGSSpaceID
+    private typealias CopySpacesForWindowsFn = @convention(c) (CGSConnectionID, UInt32, CFArray) -> Unmanaged<CFArray>?
+
+    /// kCGSAllSpacesMask: 현재 + 다른 + 사용자 공간 모두
+    private static let allSpacesMask: UInt32 = 7
 
     private static let handle: UnsafeMutableRawPointer? = {
         dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
@@ -22,6 +26,7 @@ enum SkyLight {
     private static let mainConnection = symbol("CGSMainConnectionID", as: MainConnectionFn.self)
     private static let copyManagedDisplaySpaces = symbol("CGSCopyManagedDisplaySpaces", as: CopyManagedDisplaySpacesFn.self)
     private static let getActiveSpace = symbol("CGSGetActiveSpace", as: GetActiveSpaceFn.self)
+    private static let copySpacesForWindows = symbol("CGSCopySpacesForWindows", as: CopySpacesForWindowsFn.self)
 
     static var isAvailable: Bool {
         mainConnection != nil && copyManagedDisplaySpaces != nil && getActiveSpace != nil
@@ -41,5 +46,14 @@ enum SkyLight {
     static func activeSpaceID() -> CGSSpaceID? {
         guard let cid = connection, let fn = getActiveSpace else { return nil }
         return fn(cid)
+    }
+
+    /// 창이 속한 공간 ID 목록 (보통 1개, "모든 데스크탑" 창은 여러 개)
+    static func spaceIDs(forWindow windowID: CGWindowID) -> [CGSSpaceID] {
+        guard let cid = connection, let fn = copySpacesForWindows,
+              let array = fn(cid, allSpacesMask, [NSNumber(value: windowID)] as CFArray)?.takeRetainedValue() else {
+            return []
+        }
+        return ((array as NSArray) as? [NSNumber])?.map { $0.uint64Value } ?? []
     }
 }

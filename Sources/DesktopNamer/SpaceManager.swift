@@ -5,6 +5,8 @@ import Combine
 final class SpaceManager: ObservableObject {
     @Published private(set) var spaces: [Space] = []
     @Published private(set) var activeSpace: Space?
+    /// 공간 ID → 창을 열어 둔 앱 목록. `refreshApps()`로 갱신한다.
+    @Published private(set) var appsBySpace: [CGSSpaceID: [SpaceApp]] = [:]
 
     private var observers: [NSObjectProtocol] = []
     private var pollTimer: Timer?
@@ -70,6 +72,14 @@ final class SpaceManager: ObservableObject {
         if result != spaces { spaces = result }
         let active = result.first(where: \.isActive)
         if active != activeSpace { activeSpace = active }
+    }
+
+    func refreshApps() {
+        appsBySpace = WindowInspector.appsBySpace()
+    }
+
+    func apps(in space: Space) -> [SpaceApp] {
+        appsBySpace[space.id] ?? []
     }
 
     /// macOS 단축키(⌃숫자)를 대신 눌러 전환한다. 전체 화면 공간이나 11번째 이후 데스크탑은 지원하지 않는다.

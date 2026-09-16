@@ -3,7 +3,7 @@
 macOS Mission Control의 "데스크탑 N"에 내가 정한 이름을 붙이는 메뉴 막대 앱입니다.
 
 - 메뉴 막대에 현재 데스크탑 이름이 항상 표시됩니다.
-- 메뉴에서 데스크탑 목록을 보고 클릭해서 이동합니다.
+- 메뉴에서 데스크탑 목록을 보고 클릭해서 이동합니다. 각 데스크탑에 어떤 앱의 창이 열려 있는지 아이콘과 이름으로 함께 보여줍니다.
 - `이름 바꾸기…` 창에서 데스크탑마다 이름을 정합니다. 이름은 공간의 고유 ID에 저장되어 순서를 바꿔도 따라갑니다.
 - (선택) Mission Control이 열리면 썸네일 아래 "데스크탑 N" 자리에 지정한 이름을 덮어 그립니다.
 
@@ -38,6 +38,7 @@ open build/DesktopNamer.app
 | `SkyLight.swift` | 비공개 공간 API를 dlsym으로 로드 |
 | `SpaceManager.swift` | 공간 목록/현재 공간 추적 |
 | `SpaceSwitcher.swift` | ⌃숫자 단축키를 대신 눌러 데스크탑 전환 |
+| `WindowInspector.swift` | 열린 창을 훑어 데스크탑별 앱 목록/아이콘 정리 |
 | `NameStore.swift` | UUID → 이름 저장 (UserDefaults) |
 | `StatusBarController.swift` | 메뉴 막대 항목과 메뉴 |
 | `RenameWindow.swift` | 이름 편집 창 (SwiftUI) |

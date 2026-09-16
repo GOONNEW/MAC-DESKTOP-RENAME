@@ -27,6 +27,7 @@ final class RenameWindowController {
             self.window = window
         }
         spaces.refresh()
+        spaces.refreshApps()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -72,23 +73,37 @@ struct RenameView: View {
 
     @ViewBuilder
     private func row(for space: Space) -> some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(space.isActive ? Color.accentColor.opacity(0.35) : Color.secondary.opacity(0.25))
-                .frame(width: 46, height: 28)
-                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.black.opacity(0.2), lineWidth: 0.5))
-
+        let apps = spaces.apps(in: space)
+        HStack(alignment: .top, spacing: 12) {
             Text(space.number.map { String($0) } ?? "—")
                 .font(.system(.body, design: .default).monospacedDigit())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(space.isActive ? Color.accentColor : Color.secondary)
                 .frame(width: 20, alignment: .leading)
+                .padding(.top, 4)
 
-            TextField(space.defaultName, text: binding(for: space))
-                .textFieldStyle(.roundedBorder)
-                .disabled(space.isFullscreen)
+            VStack(alignment: .leading, spacing: 6) {
+                TextField(space.defaultName, text: binding(for: space))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(space.isFullscreen)
+
+                HStack(spacing: 6) {
+                    ForEach(apps.prefix(6)) { app in
+                        if let icon = app.icon {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .frame(width: 16, height: 16)
+                        }
+                    }
+                    Text(apps.isEmpty ? "열린 창 없음" : WindowInspector.summary(for: apps, maxNames: 4))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(height: 16)
+            }
         }
         .padding(.horizontal, 12)
-        .frame(height: 44)
+        .padding(.vertical, 8)
     }
 
     private func binding(for space: Space) -> Binding<String> {
