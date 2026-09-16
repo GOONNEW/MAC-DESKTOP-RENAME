@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlay: MissionControlOverlay?
     private var badges: BadgeManager?
     private let signals = MissionControlSignals()
+    private var updater: Updater?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -96,24 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 최신 코드를 받아 빌드하고 새 버전으로 재시작한다
     private func startUpdate() {
-        let alert = NSAlert()
-        alert.messageText = "최신 버전으로 업데이트"
-        alert.informativeText = "최신 코드를 내려받아 빌드한 뒤 앱을 다시 시작합니다.\n터미널 창이 열려 진행 상황이 보이고, 1~3분 걸립니다."
-        alert.addButton(withTitle: "업데이트")
-        alert.addButton(withTitle: "취소")
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        if let error = Updater.runUpdate() {
-            let failure = NSAlert()
-            failure.messageText = "업데이트를 시작하지 못했습니다"
-            failure.informativeText = error
-            failure.addButton(withTitle: "확인")
-            failure.runModal()
-            return
-        }
-        // 터미널 스크립트가 앱 종료를 기다린 뒤 빌드한다
-        NSApp.terminate(nil)
+        let updater = Updater()
+        self.updater = updater
+        updater.start()
     }
 
     /// 배지가 없는 데스크탑을 돌며 배지를 만든다

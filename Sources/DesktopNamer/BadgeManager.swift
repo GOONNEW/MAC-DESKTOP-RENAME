@@ -345,6 +345,16 @@ final class BadgeManager {
         panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
     }
 
+    /// 설정이 바뀌면 배지를 다시 만든다 (지금 데스크탑 것만. 나머지는 방문 시 다시 만들어진다)
+    private func rebuildAll() {
+        badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
+        badges.removeAll()
+        fields.removeAll()
+        removeMirrors()
+        if let active = spaces.activeSpace { ensureBadge(for: active) }
+        log("배지 다시 만듦 (설정 변경)")
+    }
+
     private func removeBadges(notIn uuids: Set<String>) {
         for (uuid, panels) in badges where !uuids.contains(uuid) {
             panels.forEach { $0.orderOut(nil) }
