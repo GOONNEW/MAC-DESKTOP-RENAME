@@ -39,9 +39,11 @@ final class MissionControlOverlay {
     private var events: [String] = []
     /// 데스크탑 전환으로 지운 뒤, 닫힘이 한 번 감지될 때까지 다시 그리지 않는다
     private var suppressUntilClosed = false
-    /// Mission Control이 닫혀 있을 때의 Dock 창 목록. 이것과 다르면 열린 것으로 본다.
-    private var baselineSignature = ""
-    private var lastSignature = ""
+    /// WindowServer 알림으로 파악한 열림 상태
+    private var wsOpen = false
+    /// Dock이 맨 앞 앱인지 (Mission Control이 열리면 그렇게 된다)
+    private var dockWasFront = false
+    private var registerNote = ""
     private var spaceObserver: NSObjectProtocol?
     private var appObserver: NSObjectProtocol?
     private var inputMonitors: [Any] = []
@@ -62,7 +64,9 @@ final class MissionControlOverlay {
         if !ScreenText.hasScreenCaptureAccess {
             ScreenText.requestScreenCaptureAccess()
         }
-        refreshBaseline(reason: "시작")
+        SkyLight.onMissionControlEvent = { [weak self] type in self?.handleWindowServerEvent(type) }
+        registerNote = SkyLight.registerMissionControlNotifications()
+        log("WindowServer 알림 등록: \(registerNote)")
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -73,13 +77,14 @@ final class MissionControlOverlay {
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.dismiss(reason: "데스크탑 전환")
-            self?.scheduleBaselineRefresh(reason: "데스크탑 전환")
         }
         appObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.dismiss(reason: "앱 전환")
-            self?.scheduleBaselineRefresh(reason: "앱 전환")
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let id = app?.bundleIdentifier ?? "?"
+            self?.log("앱 활성화: \(id)")
+            if id != "com.apple.dock" { self?.dismiss(reason: "앱 전환") }
         }
         // Mission Control 안에서의 클릭이나 키 입력은 거의 항상 닫는 동작이다
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown], handler: { [weak self] event in
@@ -89,21 +94,18 @@ final class MissionControlOverlay {
         if let monitor { inputMonitors.append(monitor) }
     }
 
-    /// Mission Control이 닫혀 있다고 확신할 수 있는 순간(앱/데스크탑 전환 직후)에 평소 상태를 다시 기억한다.
-    private func scheduleBaselineRefresh(reason: String) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.refreshBaseline(reason: reason)
+    private func handleWindowServerEvent(_ type: UInt32) {
+        switch type {
+        case 1204:
+            log("WindowServer: Mission Control 열림 (1204)")
+            wsOpen = true
+        case 1207:
+            log("WindowServer: 닫힘 (1207)")
+            wsOpen = false
+        default:
+            log("WindowServer: 이벤트 \(type)")
+            wsOpen = false
         }
-    }
-
-    private func refreshBaseline(reason: String) {
-        let signature = DockAccessibility.dockWindowSignature()
-        if signature != baselineSignature {
-            baselineSignature = signature
-            log("평소 상태 기억 (\(reason)): \(signature.isEmpty ? "Dock 창 없음" : signature)")
-        }
-        wasOpen = false
-        suppressUntilClosed = false
     }
 
     /// 이름표를 지우고, 닫힘이 감지될 때까지 다시 그리지 않는다.
@@ -150,29 +152,16 @@ final class MissionControlOverlay {
 
     private func tick() {
         tickCount += 1
-        let signature = DockAccessibility.dockWindowSignature()
-        if signature != lastSignature {
-            lastSignature = signature
-            log("Dock 창 변화: \(signature.isEmpty ? "없음" : signature)")
-            // 상태가 바뀌었으면 인식을 다시 시도할 수 있게 한다
-            if !isShowing {
-                ocrAttempts = 0
-                nextOCRAt = Date().addingTimeInterval(0.35)
-            }
+        let dockFront = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.dock"
+        if dockFront != dockWasFront {
+            dockWasFront = dockFront
+            log(dockFront ? "Dock이 맨 앞 앱이 됨" : "Dock이 맨 앞에서 벗어남")
         }
-        let open = signature != baselineSignature
-
-        // "열림"인데 인식 시도를 다 써도 라벨이 없으면, Mission Control이 아니라 Dock의 다른 변화(자동 숨김 등)일 가능성이 크다.
-        // 그 상태를 새 평소 상태로 삼아 스스로 복구한다.
-        if open, !isShowing, !ocrInFlight, ocrAttempts >= maxOCRAttempts,
-           let openedAt, Date().timeIntervalSince(openedAt) > 5 {
-            refreshBaseline(reason: "라벨 없이 5초 경과")
-            return
-        }
+        let open = wsOpen || dockFront
 
         if !open {
             if wasOpen {
-                log("닫힘 감지 (Dock 창: \(Self.describeDockWindows()))")
+                log("닫힘 감지")
                 hide()
                 ocrAttempts = 0
                 ocrInFlight = false
@@ -189,7 +178,7 @@ final class MissionControlOverlay {
             openedAt = Date()
             lastOpenAt = openedAt
             openCount += 1
-            log("열림 감지 (Dock 창: \(Self.describeDockWindows()))")
+            log("열림 감지 (WindowServer: \(wsOpen ? "열림" : "-"), Dock 맨 앞: \(dockFront ? "예" : "아니오"))")
             ocrAttempts = 0
             nextOCRAt = Date().addingTimeInterval(0.35) // 열리는 애니메이션이 끝날 때까지 대기
             axNote = DockAccessibility.scan().note
@@ -288,8 +277,8 @@ final class MissionControlOverlay {
         }
         lines.append("그린 이름표: \(lastLabelNote.isEmpty ? "없음" : lastLabelNote)")
         lines.append("지금 Dock 창: \(Self.describeDockWindows())")
-        lines.append("평소 상태 기준: \(baselineSignature.isEmpty ? "Dock 창 없음" : baselineSignature)")
-        lines.append("지금 열림 판정: \(DockAccessibility.dockWindowSignature() != baselineSignature ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
+        lines.append("WindowServer 알림 등록 결과: \(registerNote) (0이면 성공)")
+        lines.append("지금 열림 판정: \((wsOpen || dockWasFront) ? "열림" : "닫힘"), 이름표 표시 중: \(isShowing ? "예" : "아니오")")
         if !events.isEmpty {
             lines.append("기록:")
             lines.append(contentsOf: events.map { "  " + $0 })

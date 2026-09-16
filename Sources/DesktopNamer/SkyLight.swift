@@ -11,6 +11,8 @@ enum SkyLight {
     private typealias CopyManagedDisplaySpacesFn = @convention(c) (CGSConnectionID) -> Unmanaged<CFArray>?
     private typealias GetActiveSpaceFn = @convention(c) (CGSConnectionID) -> CGSSpaceID
     private typealias CopySpacesForWindowsFn = @convention(c) (CGSConnectionID, UInt32, CFArray) -> Unmanaged<CFArray>?
+    private typealias NotifyProc = @convention(c) (UInt32, UnsafeMutableRawPointer?, Int, UnsafeMutableRawPointer?, Int32) -> Void
+    private typealias RegisterNotifyFn = @convention(c) (CGSConnectionID, NotifyProc, UInt32, UnsafeMutableRawPointer?) -> Int32
 
     /// kCGSAllSpacesMask: 현재 + 다른 + 사용자 공간 모두
     private static let allSpacesMask: UInt32 = 7
@@ -28,6 +30,8 @@ enum SkyLight {
     private static let copyManagedDisplaySpaces = symbol("CGSCopyManagedDisplaySpaces", as: CopyManagedDisplaySpacesFn.self)
     private static let getActiveSpace = symbol("CGSGetActiveSpace", as: GetActiveSpaceFn.self)
     private static let copySpacesForWindows = symbol("CGSCopySpacesForWindows", as: CopySpacesForWindowsFn.self)
+    private static let registerNotifyProc = symbol("SLSRegisterConnectionNotifyProc", as: RegisterNotifyFn.self)
+        ?? symbol("CGSRegisterConnectionNotifyProc", as: RegisterNotifyFn.self)
 
     static var isAvailable: Bool {
         mainConnection != nil && copyManagedDisplaySpaces != nil && getActiveSpace != nil
@@ -47,6 +51,27 @@ enum SkyLight {
     static func activeSpaceID() -> CGSSpaceID? {
         guard let cid = connection, let fn = getActiveSpace else { return nil }
         return fn(cid)
+    }
+
+    // MARK: - Mission Control 알림
+
+    /// Mission Control 관련 WindowServer 이벤트: 1204 전체 창 보기(열림), 1205 앱 창 보기, 1206 데스크탑 보기, 1207 닫힘
+    static let missionControlEvents: [UInt32] = [1204, 1205, 1206, 1207]
+
+    /// 메인 스레드에서 호출된다.
+    static var onMissionControlEvent: ((UInt32) -> Void)?
+
+    private static let notifyProc: NotifyProc = { type, _, _, _, _ in
+        DispatchQueue.main.async { SkyLight.onMissionControlEvent?(type) }
+    }
+
+    /// Mission Control 열림/닫힘 알림을 등록한다. 결과 문자열은 진단용.
+    static func registerMissionControlNotifications() -> String {
+        guard let cid = connection else { return "연결 없음" }
+        guard let fn = registerNotifyProc else { return "SLSRegisterConnectionNotifyProc 심볼 없음" }
+        return missionControlEvents
+            .map { "\($0)=\(fn(cid, notifyProc, $0, nil))" }
+            .joined(separator: ", ")
     }
 
     /// 창이 속한 공간 ID 목록 (보통 1개, "모든 데스크탑" 창은 여러 개)
