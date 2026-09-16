@@ -423,7 +423,7 @@ final class MissionControlOverlay {
         lines.append("화면 기록 권한: \(ScreenText.hasScreenCaptureAccess ? "허용됨" : "없음 (시스템 설정 > 개인정보 보호 및 보안 > 화면 및 시스템 오디오 녹음에서 DesktopNamer 켜기)")")
         lines.append("앱 위치: \(DockAccessibility.signingInfo())")
         lines.append("오버레이 실행 중: \(running ? "예" : "아니오"), 감시 모드: \(alwaysWatch ? "항상" : "동작 감지 시"), 화면 스트림: \(stream.isRunning ? "동작" : "정지")")
-        lines.append("동작 감지: \(trigger.lastNote), 마지막 감지: \(lastTriggerNote)")
+        lines.append("동작 감지: \(trigger.lastNote), 마지막 감지: \(lastTriggerNote), 마지막 제스처 손가락 수: \(trigger.lastTouchCount)")
         lines.append("글자 인식: \(lastOCRNote)")
         if !lastOCRTexts.isEmpty {
             lines.append("인식된 글자: " + lastOCRTexts.joined(separator: " | "))

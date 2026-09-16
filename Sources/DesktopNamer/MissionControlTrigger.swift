@@ -10,6 +10,8 @@ final class MissionControlTrigger {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private(set) var lastNote = "시작 안 됨"
+    /// 마지막 제스처의 손가락 개수 (진단용, 0이면 알 수 없음)
+    private(set) var lastTouchCount = -1
 
     // NSEvent 타입 번호 (CGEventType에는 이름이 없지만 이벤트 탭으로 받을 수 있다)
     private static let beginGesture: UInt32 = 19
@@ -72,10 +74,15 @@ final class MissionControlTrigger {
             } else if keyCode == 126, event.flags.contains(.maskControl) {
                 fire("⌃↑")
             }
-        case Self.beginGesture, Self.gesture, Self.swipe:
-            fire("트랙패드 제스처")
-        case Self.magnify:
-            fire("트랙패드 핀치")
+        case Self.beginGesture, Self.gesture, Self.swipe, Self.magnify:
+            // 손가락 개수를 알 수 있으면 3개 이상일 때만 (두 손가락 스크롤에는 반응하지 않도록)
+            let count = NSEvent(cgEvent: event)?.allTouches().count ?? 0
+            lastTouchCount = count
+            if count >= 3 {
+                fire("트랙패드 \(count)손가락 제스처")
+            } else if count == 0 {
+                fire("트랙패드 제스처")
+            }
         case CGEventType.tapDisabledByTimeout.rawValue, CGEventType.tapDisabledByUserInput.rawValue:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         default:
