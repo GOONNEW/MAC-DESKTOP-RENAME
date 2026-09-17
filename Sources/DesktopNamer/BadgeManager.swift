@@ -166,13 +166,12 @@ final class BadgeManager {
 
     private func setVisible(_ visible: Bool) {
         isVisible = visible
+        // 지금 있는 데스크탑은 Mission Control에서 축소되지 않고 실제 크기로 보인다.
+        // 그 배지를 띄우면 썸네일이 아니라 화면 위에 크게 떠 버리므로 숨긴다.
+        let activeUUID = spaces.activeSpace?.uuid
         for (uuid, panels) in badges {
-            let alpha: CGFloat = visible && hasName(uuid) ? 1 : 0
-            panels.forEach { $0.alphaValue = alpha }
-        }
-        // 배지는 자기 데스크탑에서만 보이지만, 전환 직후 잔상이 남을 수 있어 현재 것만 앞으로 올린다
-        if visible, let active = spaces.activeSpace, let panels = badges[active.uuid] {
-            panels.forEach { $0.orderFrontRegardless() }
+            let show = visible && hasName(uuid) && uuid != activeUUID
+            panels.forEach { $0.alphaValue = show ? 1 : 0 }
         }
         updateMirrors(visible: visible)
     }
