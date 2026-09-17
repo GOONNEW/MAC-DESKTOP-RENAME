@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         signals.isShowing = { [weak self] in self?.badges?.isVisible ?? false }
         signals.onOpenLikely = { [weak self] reason in self?.badges?.show(reason: reason) }
         signals.onCloseLikely = { [weak self] reason in self?.badges?.hide(reason: reason) }
+        signals.onStillOpen = { [weak self] in self?.badges?.keepAlive() }
         signals.start()
         statusBar = StatusBarController(
             spaces: spaceManager,
@@ -38,7 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSyncBadges: { [weak self] in self?.syncBadges() },
             onPreviewBadges: { [weak self] in self?.badges?.preview() },
             onUpdate: { [weak self] in self?.startUpdate() },
-            onDiagnose: { [weak self] in self?.showDiagnostics() }
+            onDiagnose: { [weak self] in self?.showDiagnostics() },
+            onRelearnGestures: { [weak self] in self?.signals.resetProbe() }
         )
 
         spaceManager.start()

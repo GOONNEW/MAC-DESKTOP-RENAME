@@ -30,6 +30,8 @@ final class BadgeManager {
     private var running = false
     private(set) var isVisible = false
     private var hideTimer: Timer?
+    /// 아무 닫힘 신호도 못 받았을 때 스스로 숨기기까지의 시간
+    private let autoHideAfter: TimeInterval = 20
     private var shownAt: Date?
     private var events: [String] = []
 
@@ -151,11 +153,6 @@ final class BadgeManager {
 
     // MARK: - 보이기/숨기기
 
-    /// 앱 전환 화면처럼 Mission Control이 아닌 상태에서는 바로 숨긴다
-    func hideForAppSwitcher() {
-        hide(reason: "앱 전환 화면")
-    }
-
     /// Mission Control이 열릴 것 같을 때: 잠깐 뒤(애니메이션이 시작될 즈음) 배지를 보이게 한다.
     func show(reason: String) {
         guard running, !isVisible else { return }
@@ -165,9 +162,21 @@ final class BadgeManager {
         setVisible(true)
         shownAt = Date()
         log("표시 (\(reason))")
-        // 닫힘 신호(클릭, 키 입력, 데스크탑 전환, 앱 전환)를 모두 놓쳤을 때의 마지막 보루.
-        // Mission Control을 오래 열어 두어도 이름이 먼저 사라지지 않도록 넉넉히 준다.
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+        armAutoHide()
+    }
+
+    /// 아직 Mission Control이 열려 있음이 확인되었을 때: 자동 숨김 시각을 미룬다.
+    /// 오래 열어 두어도 이름이 먼저 사라지지 않게 한다.
+    func keepAlive() {
+        guard running, isVisible else { return }
+        armAutoHide()
+    }
+
+    /// 닫힘 신호를 모두 놓쳤을 때의 마지막 보루.
+    /// 실제로 열려 있음이 확인되는 동안에는 keepAlive()가 계속 다시 걸어 준다.
+    private func armAutoHide() {
+        hideTimer?.invalidate()
+        hideTimer = Timer.scheduledTimer(withTimeInterval: autoHideAfter, repeats: false) { [weak self] _ in
             self?.hide(reason: "시간 초과")
         }
     }

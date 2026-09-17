@@ -12,6 +12,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onPreviewBadges: () -> Void
     private let onUpdate: () -> Void
     private let onDiagnose: () -> Void
+    private let onRelearnGestures: () -> Void
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
@@ -21,7 +22,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
          onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
          onSyncBadges: @escaping () -> Void, onPreviewBadges: @escaping () -> Void,
          onUpdate: @escaping () -> Void,
-         onDiagnose: @escaping () -> Void) {
+         onDiagnose: @escaping () -> Void,
+         onRelearnGestures: @escaping () -> Void) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
@@ -31,6 +33,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onPreviewBadges = onPreviewBadges
         self.onUpdate = onUpdate
         self.onDiagnose = onDiagnose
+        self.onRelearnGestures = onRelearnGestures
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -193,7 +196,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let advancedMenu = NSMenu()
         advancedMenu.autoenablesItems = false
 
-        let resetTrackpad = NSMenuItem(title: "트랙패드 제스처 다시 인식", action: #selector(resetTrackpad(_:)), keyEquivalent: "")
+        let resetTrackpad = NSMenuItem(title: "제스처·열림 감지 다시 익히기", action: #selector(resetTrackpad(_:)), keyEquivalent: "")
         resetTrackpad.target = self
         advancedMenu.addItem(resetTrackpad)
 
@@ -233,9 +236,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func resetTrackpad(_ sender: Any?) {
         TrackpadMonitor.resetLayout()
+        onRelearnGestures()
         let alert = NSAlert()
-        alert.messageText = "트랙패드 제스처 다시 인식"
-        alert.informativeText = "이제 트랙패드에 세 손가락을 얹고 위아래로 몇 번 움직여 주세요. 손가락 위치를 다시 찾습니다."
+        alert.messageText = "제스처·열림 감지 다시 익히기"
+        alert.informativeText = "이제 세 손가락으로 위로 쓸어 Mission Control을 몇 번 열었다 닫아 주세요. 손가락 위치와 Mission Control이 열린 상태를 다시 배웁니다."
         alert.addButton(withTitle: "확인")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
