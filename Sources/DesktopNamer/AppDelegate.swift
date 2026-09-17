@@ -58,6 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] uuids in self?.nameStore.prune(keeping: uuids) }
             .store(in: &cancellables)
 
+        badges?.autoPrepare = settings.badgeAutoPrepare
+        settings.$badgeAutoPrepare
+            .sink { [weak self] auto in self?.badges?.autoPrepare = auto }
+            .store(in: &cancellables)
+
         settings.$badgeEnabled
             .sink { [weak self] enabled in
                 guard let self, let badges = self.badges else { return }

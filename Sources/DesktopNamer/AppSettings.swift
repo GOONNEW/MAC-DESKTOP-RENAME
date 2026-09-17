@@ -10,6 +10,7 @@ final class AppSettings: ObservableObject {
     private static let badgeSizeKey = "badgeSize"
     private static let badgeMainOnlyKey = "badgeMainScreenOnly"
     private static let badgeMirrorKey = "badgeMirrorToOtherScreens"
+    private static let badgeAutoPrepareKey = "badgeAutoPrepare"
 
     @Published var overlayEnabled: Bool {
         didSet { UserDefaults.standard.set(overlayEnabled, forKey: Self.overlayKey) }
@@ -36,6 +37,11 @@ final class AppSettings: ObservableObject {
     /// 보조 모니터에도 현재 데스크탑 이름을 함께 표시한다
     @Published var badgeMirrorToOtherScreens: Bool {
         didSet { UserDefaults.standard.set(badgeMirrorToOtherScreens, forKey: Self.badgeMirrorKey) }
+    }
+
+    /// 앱을 켤 때 모든 데스크탑에 이름을 자동으로 준비한다
+    @Published var badgeAutoPrepare: Bool {
+        didSet { UserDefaults.standard.set(badgeAutoPrepare, forKey: Self.badgeAutoPrepareKey) }
     }
 
     /// 화면 감시를 항상 켠다 (가장 빠르지만 메뉴 막대에 화면 기록 표시가 계속 뜬다)
@@ -73,6 +79,7 @@ final class AppSettings: ObservableObject {
         // 보조 모니터는 데스크탑이 하나뿐인 경우가 많아 배지가 쌓인다. 기본은 주 화면만.
         badgeMainScreenOnly = UserDefaults.standard.object(forKey: Self.badgeMainOnlyKey) as? Bool ?? true
         badgeMirrorToOtherScreens = UserDefaults.standard.bool(forKey: Self.badgeMirrorKey)
+        badgeAutoPrepare = UserDefaults.standard.object(forKey: Self.badgeAutoPrepareKey) as? Bool ?? true
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }

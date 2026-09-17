@@ -180,6 +180,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         prepare.target = self
         displayMenu.addItem(prepare)
 
+        let auto = NSMenuItem(title: "앱 시작 시 자동 준비", action: #selector(toggleAutoPrepare(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.state = settings.badgeAutoPrepare ? .on : .off
+        displayMenu.addItem(auto)
+
         display.submenu = displayMenu
         menu.addItem(display)
 
@@ -291,6 +296,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleMainScreenOnly(_ sender: Any?) {
         settings.badgeMainScreenOnly.toggle()
+    }
+
+    @objc private func toggleAutoPrepare(_ sender: Any?) {
+        settings.badgeAutoPrepare.toggle()
     }
 
     @objc private func toggleMirror(_ sender: Any?) {

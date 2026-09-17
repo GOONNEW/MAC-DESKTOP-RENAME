@@ -118,7 +118,22 @@ final class BadgeManager {
             .store(in: &cancellables)
 
         if let active = spaces.activeSpace { ensureBadge(for: active) }
+
+        // 앱을 켤 때마다 배지를 다시 만들어야 하므로, 이름이 지정된 데스크탑이 있으면 자동으로 준비한다.
+        // 데스크탑을 한 바퀴 도는 작업이라 화면이 잠깐 바뀐다.
+        if autoPrepare {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, self.running, !self.names.names.isEmpty else { return }
+                self.log("시작 시 자동 준비")
+                self.prepareAllBadges { message in
+                    self.log("자동 준비 결과: \(message.replacingOccurrences(of: "\n", with: " "))")
+                }
+            }
+        }
     }
+
+    /// 앱을 켤 때 배지를 자동으로 준비한다
+    var autoPrepare = true
 
     func stop() {
         running = false
