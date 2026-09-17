@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onRename: { [weak self] in self?.renameWindow?.show() },
             onRenameSpace: { [weak self] space in self?.promptRename(for: space) },
             onPrepareBadges: { [weak self] in self?.prepareBadges() },
+            onRebuildBadges: { [weak self] in self?.prepareBadges(rebuild: true) },
             onPreviewBadges: { [weak self] in self?.badges?.preview() },
             onUpdate: { [weak self] in self?.startUpdate() },
             onDiagnose: { [weak self] in self?.showDiagnostics() }
@@ -113,15 +114,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 배지가 없는 데스크탑을 돌며 배지를 만든다
-    private func prepareBadges() {
+    private func prepareBadges(rebuild: Bool = false) {
         guard let badges else { return }
-        badges.prepareAllBadges { message in
+        let title = rebuild ? "모든 데스크탑 이름 다시 만들기" : "모든 데스크탑에 배지 준비"
+        let report: (String) -> Void = { message in
             let alert = NSAlert()
-            alert.messageText = "모든 데스크탑에 배지 준비"
+            alert.messageText = title
             alert.informativeText = message
             alert.addButton(withTitle: "확인")
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
+        }
+        if rebuild {
+            badges.rebuildAllBadges(completion: report)
+        } else {
+            badges.prepareAllBadges(completion: report)
         }
     }
 

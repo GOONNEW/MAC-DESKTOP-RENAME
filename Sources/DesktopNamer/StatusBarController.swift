@@ -9,6 +9,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onRename: () -> Void
     private let onRenameSpace: (Space) -> Void
     private let onPrepareBadges: () -> Void
+    private let onRebuildBadges: () -> Void
     private let onPreviewBadges: () -> Void
     private let onUpdate: () -> Void
     private let onDiagnose: () -> Void
@@ -19,7 +20,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
          onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
-         onPrepareBadges: @escaping () -> Void, onPreviewBadges: @escaping () -> Void,
+         onPrepareBadges: @escaping () -> Void, onRebuildBadges: @escaping () -> Void,
+         onPreviewBadges: @escaping () -> Void,
          onUpdate: @escaping () -> Void,
          onDiagnose: @escaping () -> Void) {
         self.spaces = spaces
@@ -28,6 +30,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onRename = onRename
         self.onRenameSpace = onRenameSpace
         self.onPrepareBadges = onPrepareBadges
+        self.onRebuildBadges = onRebuildBadges
         self.onPreviewBadges = onPreviewBadges
         self.onUpdate = onUpdate
         self.onDiagnose = onDiagnose
@@ -180,6 +183,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         prepare.target = self
         displayMenu.addItem(prepare)
 
+        let rebuild = NSMenuItem(title: "이름이 안 보일 때: 모두 다시 만들기…", action: #selector(rebuildBadges(_:)), keyEquivalent: "")
+        rebuild.target = self
+        displayMenu.addItem(rebuild)
+
         let hideActive = NSMenuItem(title: "현재 데스크탑 이름은 화면에 남기지 않기", action: #selector(toggleHideActive(_:)), keyEquivalent: "")
         hideActive.target = self
         hideActive.state = settings.badgeHideActiveAfterSnapshot ? .on : .off
@@ -317,6 +324,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func prepareBadges(_ sender: Any?) {
         onPrepareBadges()
+    }
+
+    @objc private func rebuildBadges(_ sender: Any?) {
+        onRebuildBadges()
     }
 
     @objc private func update(_ sender: Any?) {

@@ -10,6 +10,8 @@ final class SpaceManager: ObservableObject {
 
     private var observers: [NSObjectProtocol] = []
     private var pollTimer: Timer?
+    /// 목록이 수상하게 줄어들어 무시한 횟수. 진짜로 줄어든 경우 몇 번 뒤에는 받아들인다.
+    private var droppedRefreshes = 0
 
     func start() {
         refresh()
@@ -68,6 +70,21 @@ final class SpaceManager: ObservableObject {
                 ))
             }
         }
+
+        // SkyLight는 공간 전환이나 Mission Control 도중 목록을 비거나 일부만 돌려줄 때가 있다.
+        // 그 값을 그대로 쓰면 "데스크탑이 사라졌다"고 오해해 배지 창까지 닫히므로 무시한다.
+        if result.isEmpty, !spaces.isEmpty {
+            droppedRefreshes += 1
+            return
+        }
+        let desktops = result.filter { !$0.isFullscreen }.count
+        let knownDesktops = spaces.filter { !$0.isFullscreen }.count
+        if knownDesktops > 1, desktops < knownDesktops, droppedRefreshes < 3 {
+            // 한 번에 여러 개가 사라진 것처럼 보이면 일단 한 번 건너뛰고 다시 확인한다
+            droppedRefreshes += 1
+            return
+        }
+        droppedRefreshes = 0
 
         if result != spaces { spaces = result }
         let active = result.first(where: \.isActive)

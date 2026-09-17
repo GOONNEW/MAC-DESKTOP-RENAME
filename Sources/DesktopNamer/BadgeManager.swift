@@ -142,6 +142,11 @@ final class BadgeManager {
         badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
         badges.removeAll()
         fields.removeAll()
+        alphas.removeAll()
+        namedCache.removeAll()
+        fadedActiveUUID = nil
+        activeFadeWork?.cancel()
+        reassertWork?.cancel()
         removeMirrors()
         isVisible = false
     }
@@ -157,6 +162,8 @@ final class BadgeManager {
     func show(reason: String) {
         guard running, !isVisible else { return }
         hideTimer?.invalidate()
+        // 이전에 "현재 데스크탑 숨기기"로 꺼 둔 배지가 남아 있지 않게 먼저 정리한다
+        cancelActiveFade()
         // 지연 없이 즉시 띄운다. macOS는 Mission Control을 열 때 현재 데스크탑 화면을
         // 한 번 찍어 썸네일로 쓰는데, 그 순간보다 배지가 늦으면 썸네일에 찍히지 않는다.
         setVisible(true)
@@ -173,7 +180,7 @@ final class BadgeManager {
         // 막 보이기 시작한 직후(여는 제스처의 잔여 이벤트)는 무시한다
         if let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
-        activeFadeWork?.cancel()
+        cancelActiveFade()
         setVisible(false)
         shownAt = nil
         log("숨김 (\(reason))")
@@ -181,40 +188,94 @@ final class BadgeManager {
 
     private func setVisible(_ visible: Bool) {
         isVisible = visible
-        activeFadeWork?.cancel()
-        for (uuid, panels) in badges {
-            let alpha: CGFloat = visible && hasName(uuid) ? 1 : 0
-            panels.forEach { panel in
-                // 사라지는 애니메이션이 진행 중일 수 있으므로 확실히 끊고 값을 넣는다
-                panel.animator().alphaValue = alpha
-                panel.alphaValue = alpha
-            }
+        cancelActiveFade()
+        reassertWork?.cancel()
+        reassertWork = nil
+        for uuid in badges.keys {
+            applyAlpha(visible && hasName(uuid) ? 1 : 0, to: uuid)
         }
         updateMirrors(visible: visible)
-        if visible { scheduleActiveBadgeFadeOut() }
+        if visible {
+            scheduleActiveBadgeFadeOut()
+            scheduleReassert()
+        }
+    }
+
+    /// 알파 값을 애니메이션 없이 즉시 적용한다.
+    ///
+    /// `panel.animator().alphaValue`를 쓰면 0.25초짜리 암시적 애니메이션이 시작되는데,
+    /// 그 애니메이션은 뒤에 이어지는 직접 대입(`panel.alphaValue = ...`)을 매 프레임 덮어쓴다.
+    /// 배경 데스크탑에 있는 창은 화면 갱신이 늦어 애니메이션이 끝까지 돌지 않는 경우가 있어,
+    /// 한 번 0으로 페이드된 배지가 다시 1로 돌아오지 못한 채 남아 있었다. (데스크탑 3 증상)
+    private func applyAlpha(_ alpha: CGFloat, to uuid: String) {
+        guard let panels = badges[uuid] else { return }
+        alphas[uuid] = alpha
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            panels.forEach { panel in
+                panel.alphaValue = alpha
+                // 배경 데스크탑의 창은 알파만 바꾸면 창 서버가 다시 그리지 않는 일이 있다.
+                // 내용을 다시 그리게 해서 썸네일에 확실히 반영되게 한다.
+                if alpha > 0, let view = panel.contentView {
+                    view.setNeedsDisplay(view.bounds)
+                    panel.displayIfNeeded()
+                }
+            }
+        }
     }
 
     /// 현재 데스크탑은 Mission Control에서 축소되지 않아 배지가 화면에 크게 보인다.
     /// macOS가 썸네일을 찍을 시간만 준 뒤 그 배지만 숨겨, 화면이 가려지지 않게 한다.
     private func scheduleActiveBadgeFadeOut() {
         guard hideActiveBadgeAfterSnapshot else { return }
-        activeFadeWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isVisible else { return }
             // 예약 시점이 아니라 실행 시점의 현재 데스크탑을 숨긴다
-            guard let uuid = self.spaces.activeSpace?.uuid else { return }
-            self.badges[uuid]?.forEach { panel in
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.15
-                    panel.animator().alphaValue = 0
-                }
-            }
+            guard let uuid = self.spaces.activeSpace?.uuid, self.badges[uuid] != nil else { return }
+            self.fadedActiveUUID = uuid
+            self.applyAlpha(0, to: uuid)
         }
         activeFadeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + activeBadgeVisibleFor, execute: work)
     }
 
+    /// 예약된 숨김을 취소하고, 이미 숨겨 둔 배지가 있으면 되돌린다.
+    private func cancelActiveFade() {
+        activeFadeWork?.cancel()
+        activeFadeWork = nil
+        guard let uuid = fadedActiveUUID else { return }
+        fadedActiveUUID = nil
+        applyAlpha(isVisible && hasName(uuid) ? 1 : 0, to: uuid)
+    }
+
+    /// 안전망: 표시 직후 한 번 더 모든 배지의 알파를 확인해 바로잡는다.
+    ///
+    /// 창 서버가 배경 데스크탑의 창을 늦게 갱신하는 일이 있어, 한 번 더 값을 못 박아 둔다.
+    private func scheduleReassert() {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isVisible else { return }
+            let activeUUID = self.spaces.activeSpace?.uuid
+            for uuid in self.badges.keys {
+                // 현재 데스크탑은 위에서 일부러 숨겼을 수 있으므로 건드리지 않는다
+                if uuid == activeUUID, self.fadedActiveUUID == uuid { continue }
+                let want: CGFloat = self.hasName(uuid) ? 1 : 0
+                if self.alphas[uuid] != want || self.badges[uuid]?.first?.alphaValue != want {
+                    self.applyAlpha(want, to: uuid)
+                    self.log("알파 보정: \(self.spaces.spaces.first(where: { $0.uuid == uuid })?.defaultName ?? uuid) → \(want)")
+                }
+            }
+        }
+        reassertWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
+    }
+
     private var activeFadeWork: DispatchWorkItem?
+    private var reassertWork: DispatchWorkItem?
+    /// 현재 데스크탑 배지를 일부러 숨긴 상태라면 그 UUID
+    private var fadedActiveUUID: String?
+    /// 배지마다 마지막으로 적용한 알파 (진단용)
+    private var alphas: [String: CGFloat] = [:]
     /// 현재 데스크탑 배지를 화면에 남겨 두는 시간 (썸네일이 찍히기에 충분한 최소 시간)
     private let activeBadgeVisibleFor: TimeInterval = 0.45
     /// 썸네일이 찍힌 뒤 현재 데스크탑 배지를 숨길지
@@ -269,15 +330,34 @@ final class BadgeManager {
         }
     }
 
+    /// 공간 목록이 잠시 비거나 갱신 중이면 마지막으로 알던 값을 쓴다.
+    /// (목록이 비었을 때 false가 되어 배지가 통째로 꺼지는 일이 있었다)
+    private var namedCache: [String: Bool] = [:]
+
     private func hasName(_ uuid: String) -> Bool {
-        guard let space = spaces.spaces.first(where: { $0.uuid == uuid }) else { return false }
-        return names.customName(for: space) != nil
+        guard let space = spaces.spaces.first(where: { $0.uuid == uuid }) else {
+            return namedCache[uuid] ?? false
+        }
+        let has = names.customName(for: space) != nil
+        namedCache[uuid] = has
+        return has
     }
 
     // MARK: - 배지 창
 
     private func ensureBadge(for space: Space) {
-        guard running, space.isActive, !space.isFullscreen, badges[space.uuid] == nil else { return }
+        guard running, space.isActive, !space.isFullscreen else { return }
+        if let existing = badges[space.uuid] {
+            // 이 데스크탑이 지금 활성인데도 창이 어느 화면에도 붙어 있지 않다면,
+            // 창이 데스크탑 소속을 잃은 것이다. 이 경우 스스로 다시 만든다.
+            guard existing.contains(where: { $0.screen == nil }) else { return }
+            log("배지 복구: \(space.defaultName) (화면 소속을 잃음)")
+            existing.forEach { $0.orderOut(nil) }
+            badges.removeValue(forKey: space.uuid)
+            fields.removeValue(forKey: space.uuid)
+            alphas.removeValue(forKey: space.uuid)
+            if fadedActiveUUID == space.uuid { fadedActiveUUID = nil }
+        }
         var panels: [NSPanel] = []
         var texts: [NSTextField] = []
         // NSScreen.main은 키 창이 있는 화면이라 바뀔 수 있다. 메뉴 막대가 있는 화면(screens[0])으로 고정한다.
@@ -291,10 +371,7 @@ final class BadgeManager {
         badges[space.uuid] = panels
         fields[space.uuid] = texts
         layout(uuid: space.uuid)
-        if isVisible {
-            let alpha: CGFloat = hasName(space.uuid) ? 1 : 0
-            panels.forEach { $0.alphaValue = alpha }
-        }
+        applyAlpha(isVisible && hasName(space.uuid) ? 1 : 0, to: space.uuid)
         log("배지 생성: \(space.defaultName) (화면 \(panels.count)개)")
     }
 
@@ -341,8 +418,9 @@ final class BadgeManager {
             guard let space = spaces.spaces.first(where: { $0.uuid == uuid }) else { continue }
             texts.forEach { $0.stringValue = names.displayName(for: space) }
             layout(uuid: uuid)
-            let alpha: CGFloat = isVisible && hasName(uuid) ? 1 : 0
-            badges[uuid]?.forEach { $0.alphaValue = alpha }
+            if fadedActiveUUID != uuid {
+                applyAlpha(isVisible && hasName(uuid) ? 1 : 0, to: uuid)
+            }
         }
     }
 
@@ -398,20 +476,54 @@ final class BadgeManager {
         badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
         badges.removeAll()
         fields.removeAll()
+        alphas.removeAll()
+        fadedActiveUUID = nil
         removeMirrors()
         if let active = spaces.activeSpace { ensureBadge(for: active) }
         log("배지 다시 만듦 (설정 변경)")
     }
 
+    /// 목록에서 사라진 데스크탑의 배지를 닫는다.
+    ///
+    /// 다만 SkyLight 목록은 전환 중에 잠깐 불완전할 수 있다. 한 번 빠졌다고 바로 닫으면
+    /// 그 데스크탑 배지는 직접 방문할 때까지 영영 돌아오지 않는다. 그래서
+    /// 두 번 연속 빠졌을 때만 닫고, Mission Control이 떠 있는 동안은 건드리지 않는다.
     private func removeBadges(notIn uuids: Set<String>) {
-        for (uuid, panels) in badges where !uuids.contains(uuid) {
+        guard !isVisible else { return }
+        let missing = Set(badges.keys).subtracting(uuids)
+        let confirmed = missing.intersection(missingOnce)
+        missingOnce = missing.subtracting(confirmed)
+        for (uuid, panels) in badges where confirmed.contains(uuid) {
             panels.forEach { $0.orderOut(nil) }
             badges.removeValue(forKey: uuid)
             fields.removeValue(forKey: uuid)
+            alphas.removeValue(forKey: uuid)
+            namedCache.removeValue(forKey: uuid)
+            if fadedActiveUUID == uuid { fadedActiveUUID = nil }
+            let name = spaces.spaces.first(where: { $0.uuid == uuid })?.defaultName ?? uuid
+            log("배지 닫음: \(name) (목록에서 사라짐)")
         }
     }
 
+    /// 한 번 목록에서 빠졌지만 아직 닫지 않은 데스크탑
+    private var missingOnce: Set<String> = []
+
     // MARK: - 모든 데스크탑 준비
+
+    /// 배지를 모두 버리고 데스크탑을 한 바퀴 돌며 새로 만든다.
+    /// 배경 데스크탑의 창은 상태를 확인할 방법이 없으므로, 이름이 안 보일 때 쓰는 확실한 수단이다.
+    func rebuildAllBadges(completion: @escaping (String) -> Void) {
+        guard running else { completion("이름 표시가 꺼져 있습니다. 먼저 켜 주세요."); return }
+        badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
+        badges.removeAll()
+        fields.removeAll()
+        alphas.removeAll()
+        fadedActiveUUID = nil
+        missingOnce.removeAll()
+        log("모든 배지 버리고 다시 만들기")
+        if let active = spaces.activeSpace { ensureBadge(for: active) }
+        prepareAllBadges(completion: completion)
+    }
 
     /// 배지가 없는 데스크탑을 차례로 방문해 배지를 만들고 원래 자리로 돌아온다.
     /// 전환은 ⌃숫자 단축키로 하므로, 그 단축키가 꺼져 있으면 실패한다. 실패를 감지해 알려 준다.
@@ -505,10 +617,21 @@ final class BadgeManager {
         var lines: [String] = []
         lines.append("이름 배지: \(running ? "켜짐" : "꺼짐"), 지금 \(isVisible ? "보임" : "숨김"), 위치 \(corner.title), 크기 \(size.title), \(mainScreenOnly ? "주 화면만" : "모든 화면")")
         lines.append("화면 수: \(NSScreen.screens.count), 배지 창 수: \(badges.values.reduce(0) { $0 + $1.count }), 보조 화면 미러: \(mirrorToOtherScreens ? "켜짐 (\(mirrors.count)개)" : "꺼짐")")
-        let prepared = spaces.spaces.filter { badges[$0.uuid] != nil }.map { $0.defaultName }
         let missing = spaces.spaces.filter { !$0.isFullscreen && badges[$0.uuid] == nil }.map { $0.defaultName }
-        lines.append("배지 있는 데스크탑: \(prepared.isEmpty ? "없음" : prepared.joined(separator: ", "))")
         lines.append("배지 없는 데스크탑: \(missing.isEmpty ? "없음" : missing.joined(separator: ", "))")
+        lines.append("배지 상태 (이름 / 투명도 / 창이 실제로 가진 값):")
+        for space in spaces.spaces where badges[space.uuid] != nil {
+            let panels = badges[space.uuid] ?? []
+            let real = panels.map { String(format: "%.2f", Double($0.alphaValue)) }.joined(separator: ",")
+            let want = alphas[space.uuid].map { String(format: "%.2f", Double($0)) } ?? "-"
+            let name = names.customName(for: space) ?? "(이름 없음)"
+            var marks: [String] = []
+            if space.isActive { marks.append("현재") }
+            if fadedActiveUUID == space.uuid { marks.append("일부러 숨김") }
+            if panels.first?.screen == nil { marks.append("화면 미할당") }
+            let suffix = marks.isEmpty ? "" : " [" + marks.joined(separator: ", ") + "]"
+            lines.append("  \(space.defaultName) \(name) / 적용 \(want) / 실제 \(real)\(suffix)")
+        }
         if !events.isEmpty {
             lines.append("배지 기록:")
             lines.append(contentsOf: events.map { "  " + $0 })
