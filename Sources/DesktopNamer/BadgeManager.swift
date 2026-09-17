@@ -157,12 +157,11 @@ final class BadgeManager {
     func show(reason: String) {
         guard running, !isVisible else { return }
         hideTimer?.invalidate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            guard let self, self.running else { return }
-            self.setVisible(true)
-            self.shownAt = Date()
-            self.log("표시 (\(reason))")
-        }
+        // 지연 없이 즉시 띄운다. macOS는 Mission Control을 열 때 현재 데스크탑 화면을
+        // 한 번 찍어 썸네일로 쓰는데, 그 순간보다 배지가 늦으면 썸네일에 찍히지 않는다.
+        setVisible(true)
+        shownAt = Date()
+        log("표시 (\(reason))")
         // 닫힘 신호를 모두 놓쳐도 오래 남지 않도록
         hideTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
             self?.hide(reason: "시간 초과")

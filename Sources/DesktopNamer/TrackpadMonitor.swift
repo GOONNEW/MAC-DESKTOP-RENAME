@@ -41,7 +41,7 @@ final class TrackpadMonitor {
     private static var startCount = 0
     private static var fired = false
     /// 위로 쓸기로 인정할 최소 이동량 (0~1 정규화 좌표)
-    private static let minimumRise: Float = 0.035
+    private static let minimumRise: Float = 0.02
 
     // 진단
     private(set) static var lastCount = 0
