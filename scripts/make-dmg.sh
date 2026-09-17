@@ -9,25 +9,30 @@ VERSION="${1:-0.1.0}"
 APP="build/$APP_NAME.app"
 DIST="dist"
 DMG="$DIST/$APP_NAME-$VERSION.dmg"
+RW="$DIST/$APP_NAME-rw.dmg"
+VOLUME="/Volumes/$APP_NAME"
 
 # 최신 상태로 빌드
 ./scripts/build-app.sh
-
 [ -d "$APP" ] || { echo "앱을 찾지 못했습니다: $APP" >&2; exit 1; }
 
 mkdir -p "$DIST"
-rm -f "$DMG"
+rm -f "$DMG" "$RW"
 
-# DMG에 넣을 내용을 모을 폴더 (프로젝트 안에 만들어 경로 문제를 피한다)
-STAGE="$DIST/stage"
-rm -rf "$STAGE"
-mkdir -p "$STAGE"
-trap 'rm -rf "$STAGE"' EXIT
+# 앱 크기 + 여유 공간으로 빈 디스크 이미지를 만든 뒤 내용을 채운다.
+# (폴더를 통째로 넘기는 -srcfolder 방식은 심볼릭 링크와 함께 쓰면 실패하는 경우가 있다)
+SIZE_MB=$(( $(du -sm "$APP" | cut -f1) + 30 ))
+hdiutil create -size "${SIZE_MB}m" -fs HFS+ -volname "$APP_NAME" -type UDIF -ov "$RW" >/dev/null
 
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
+# 마운트하고 내용 채우기
+hdiutil detach "$VOLUME" -quiet 2>/dev/null || true
+hdiutil attach "$RW" -nobrowse -quiet
+trap 'hdiutil detach "$VOLUME" -quiet 2>/dev/null || true; rm -f "$RW"' EXIT
 
-cat > "$STAGE/READ-ME.txt" <<'GUIDE'
+cp -R "$APP" "$VOLUME/"
+ln -s /Applications "$VOLUME/Applications"
+
+cat > "$VOLUME/READ-ME.txt" <<'GUIDE'
 DesktopNamer 설치 방법
 
 1. DesktopNamer 아이콘을 옆의 Applications 폴더로 끌어다 놓으세요.
@@ -48,14 +53,13 @@ DesktopNamer 설치 방법
 - 이름은 메뉴 막대 아이콘 > 이름 바꾸기 에서 정합니다.
 GUIDE
 
-# 압축된 읽기 전용 DMG 생성
-hdiutil create \
-  -volname "$APP_NAME" \
-  -srcfolder "$STAGE" \
-  -fs HFS+ \
-  -format UDZO \
-  -ov \
-  "$DMG"
+sync
+hdiutil detach "$VOLUME" -quiet
+
+# 읽기 전용 압축본으로 변환
+hdiutil convert "$RW" -format UDZO -o "$DMG" >/dev/null
+rm -f "$RW"
+trap - EXIT
 
 echo
 echo "설치 파일 생성 완료: $DMG"
