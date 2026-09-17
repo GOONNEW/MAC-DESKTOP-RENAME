@@ -63,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] auto in self?.badges?.autoPrepare = auto }
             .store(in: &cancellables)
 
+        badges?.hideActiveBadgeAfterSnapshot = settings.badgeHideActiveAfterSnapshot
+        settings.$badgeHideActiveAfterSnapshot
+            .sink { [weak self] hide in self?.badges?.hideActiveBadgeAfterSnapshot = hide }
+            .store(in: &cancellables)
+
         settings.$badgeEnabled
             .sink { [weak self] enabled in
                 guard let self, let badges = self.badges else { return }

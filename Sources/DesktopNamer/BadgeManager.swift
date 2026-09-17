@@ -173,6 +173,7 @@ final class BadgeManager {
         // 막 보이기 시작한 직후(여는 제스처의 잔여 이벤트)는 무시한다
         if let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
+        activeFadeWork?.cancel()
         setVisible(false)
         shownAt = nil
         log("숨김 (\(reason))")
@@ -185,7 +186,32 @@ final class BadgeManager {
             panels.forEach { $0.alphaValue = alpha }
         }
         updateMirrors(visible: visible)
+        if visible { scheduleActiveBadgeFadeOut() }
     }
+
+    /// 현재 데스크탑은 Mission Control에서 축소되지 않아 배지가 화면에 크게 보인다.
+    /// macOS가 썸네일을 찍을 시간만 준 뒤 그 배지만 숨겨, 화면이 가려지지 않게 한다.
+    private func scheduleActiveBadgeFadeOut() {
+        guard hideActiveBadgeAfterSnapshot, let uuid = spaces.activeSpace?.uuid else { return }
+        activeFadeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.badges[uuid]?.forEach { panel in
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.15
+                    panel.animator().alphaValue = 0
+                }
+            }
+        }
+        activeFadeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + activeBadgeVisibleFor, execute: work)
+    }
+
+    private var activeFadeWork: DispatchWorkItem?
+    /// 현재 데스크탑 배지를 화면에 남겨 두는 시간 (썸네일이 찍히기에 충분한 최소 시간)
+    private let activeBadgeVisibleFor: TimeInterval = 0.45
+    /// 썸네일이 찍힌 뒤 현재 데스크탑 배지를 숨길지
+    var hideActiveBadgeAfterSnapshot = true
 
     // MARK: - 보조 화면 미러
 

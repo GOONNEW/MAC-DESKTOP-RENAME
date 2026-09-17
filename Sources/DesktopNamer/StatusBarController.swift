@@ -180,6 +180,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         prepare.target = self
         displayMenu.addItem(prepare)
 
+        let hideActive = NSMenuItem(title: "현재 데스크탑 이름은 화면에 남기지 않기", action: #selector(toggleHideActive(_:)), keyEquivalent: "")
+        hideActive.target = self
+        hideActive.state = settings.badgeHideActiveAfterSnapshot ? .on : .off
+        displayMenu.addItem(hideActive)
+
         let auto = NSMenuItem(title: "앱 시작 시 자동 준비", action: #selector(toggleAutoPrepare(_:)), keyEquivalent: "")
         auto.target = self
         auto.state = settings.badgeAutoPrepare ? .on : .off
@@ -296,6 +301,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleMainScreenOnly(_ sender: Any?) {
         settings.badgeMainScreenOnly.toggle()
+    }
+
+    @objc private func toggleHideActive(_ sender: Any?) {
+        settings.badgeHideActiveAfterSnapshot.toggle()
     }
 
     @objc private func toggleAutoPrepare(_ sender: Any?) {

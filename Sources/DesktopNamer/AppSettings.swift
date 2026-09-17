@@ -11,6 +11,7 @@ final class AppSettings: ObservableObject {
     private static let badgeMainOnlyKey = "badgeMainScreenOnly"
     private static let badgeMirrorKey = "badgeMirrorToOtherScreens"
     private static let badgeAutoPrepareKey = "badgeAutoPrepare"
+    private static let badgeHideActiveKey = "badgeHideActiveAfterSnapshot"
 
     @Published var overlayEnabled: Bool {
         didSet { UserDefaults.standard.set(overlayEnabled, forKey: Self.overlayKey) }
@@ -42,6 +43,11 @@ final class AppSettings: ObservableObject {
     /// 앱을 켤 때 모든 데스크탑에 이름을 자동으로 준비한다
     @Published var badgeAutoPrepare: Bool {
         didSet { UserDefaults.standard.set(badgeAutoPrepare, forKey: Self.badgeAutoPrepareKey) }
+    }
+
+    /// 썸네일이 찍힌 뒤 현재 데스크탑 배지를 숨긴다 (화면에 큰 글씨가 남지 않게)
+    @Published var badgeHideActiveAfterSnapshot: Bool {
+        didSet { UserDefaults.standard.set(badgeHideActiveAfterSnapshot, forKey: Self.badgeHideActiveKey) }
     }
 
     /// 화면 감시를 항상 켠다 (가장 빠르지만 메뉴 막대에 화면 기록 표시가 계속 뜬다)
@@ -80,6 +86,7 @@ final class AppSettings: ObservableObject {
         badgeMainScreenOnly = UserDefaults.standard.object(forKey: Self.badgeMainOnlyKey) as? Bool ?? true
         badgeMirrorToOtherScreens = UserDefaults.standard.bool(forKey: Self.badgeMirrorKey)
         badgeAutoPrepare = UserDefaults.standard.object(forKey: Self.badgeAutoPrepareKey) as? Bool ?? true
+        badgeHideActiveAfterSnapshot = UserDefaults.standard.object(forKey: Self.badgeHideActiveKey) as? Bool ?? true
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
