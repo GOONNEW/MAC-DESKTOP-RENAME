@@ -186,7 +186,8 @@ final class BadgeManager {
         log("숨김 (\(reason))")
     }
 
-    private func setVisible(_ visible: Bool) {
+    /// - Parameter keepActive: true면 현재 데스크탑 배지를 자동으로 숨기지 않는다 (미리 보기용)
+    private func setVisible(_ visible: Bool, keepActive: Bool = false) {
         isVisible = visible
         cancelActiveFade()
         reassertWork?.cancel()
@@ -196,7 +197,7 @@ final class BadgeManager {
         }
         updateMirrors(visible: visible)
         if visible {
-            scheduleActiveBadgeFadeOut()
+            if !keepActive { scheduleActiveBadgeFadeOut() }
             scheduleReassert()
         }
     }
@@ -278,8 +279,9 @@ final class BadgeManager {
     private var alphas: [String: CGFloat] = [:]
     /// 현재 데스크탑 배지를 화면에 남겨 두는 시간 (썸네일이 찍히기에 충분한 최소 시간)
     private let activeBadgeVisibleFor: TimeInterval = 0.45
-    /// 썸네일이 찍힌 뒤 현재 데스크탑 배지를 숨길지
-    var hideActiveBadgeAfterSnapshot = true
+    /// 썸네일이 찍힌 뒤 현재 데스크탑 배지를 숨긴다.
+    /// 안 숨기면 미션 컨트롤 화면 위에 큰 글씨가 그대로 떠 있게 된다.
+    private let hideActiveBadgeAfterSnapshot = true
 
     // MARK: - 보조 화면 미러
 
@@ -322,7 +324,8 @@ final class BadgeManager {
     func preview() {
         guard running else { return }
         hideTimer?.invalidate()
-        setVisible(true)
+        // 미리 보기는 눈으로 확인하는 용도라 현재 데스크탑 배지도 그대로 둔다
+        setVisible(true, keepActive: true)
         shownAt = Date().addingTimeInterval(-1)
         log("미리 보기")
         hideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in

@@ -3,19 +3,12 @@ import Combine
 import ServiceManagement
 
 final class AppSettings: ObservableObject {
-    private static let overlayKey = "overlayEnabled"
-    private static let alwaysWatchKey = "alwaysWatch"
     private static let badgeKey = "badgeEnabled"
     private static let badgeCornerKey = "badgeCorner"
     private static let badgeSizeKey = "badgeSize"
     private static let badgeMainOnlyKey = "badgeMainScreenOnly"
     private static let badgeMirrorKey = "badgeMirrorToOtherScreens"
     private static let badgeAutoPrepareKey = "badgeAutoPrepare"
-    private static let badgeHideActiveKey = "badgeHideActiveAfterSnapshot"
-
-    @Published var overlayEnabled: Bool {
-        didSet { UserDefaults.standard.set(overlayEnabled, forKey: Self.overlayKey) }
-    }
 
     /// 데스크탑마다 이름 배지 창을 두고 Mission Control이 열릴 때만 보이게 한다 (기본 방식)
     @Published var badgeEnabled: Bool {
@@ -45,16 +38,6 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(badgeAutoPrepare, forKey: Self.badgeAutoPrepareKey) }
     }
 
-    /// 썸네일이 찍힌 뒤 현재 데스크탑 배지를 숨긴다 (화면에 큰 글씨가 남지 않게)
-    @Published var badgeHideActiveAfterSnapshot: Bool {
-        didSet { UserDefaults.standard.set(badgeHideActiveAfterSnapshot, forKey: Self.badgeHideActiveKey) }
-    }
-
-    /// 화면 감시를 항상 켠다 (가장 빠르지만 메뉴 막대에 화면 기록 표시가 계속 뜬다)
-    @Published var alwaysWatch: Bool {
-        didSet { UserDefaults.standard.set(alwaysWatch, forKey: Self.alwaysWatchKey) }
-    }
-
     private var isReverting = false
 
     @Published var launchAtLogin: Bool {
@@ -76,8 +59,6 @@ final class AppSettings: ObservableObject {
     }
 
     init() {
-        overlayEnabled = UserDefaults.standard.bool(forKey: Self.overlayKey)
-        alwaysWatch = UserDefaults.standard.bool(forKey: Self.alwaysWatchKey)
         // 배지는 기본으로 켠다 (한 번도 설정한 적 없으면 true)
         badgeEnabled = UserDefaults.standard.object(forKey: Self.badgeKey) as? Bool ?? true
         badgeCorner = (UserDefaults.standard.string(forKey: Self.badgeCornerKey)).flatMap(BadgeManager.Corner.init(rawValue:)) ?? .bottomRight
@@ -86,7 +67,6 @@ final class AppSettings: ObservableObject {
         badgeMainScreenOnly = UserDefaults.standard.object(forKey: Self.badgeMainOnlyKey) as? Bool ?? true
         badgeMirrorToOtherScreens = UserDefaults.standard.bool(forKey: Self.badgeMirrorKey)
         badgeAutoPrepare = UserDefaults.standard.object(forKey: Self.badgeAutoPrepareKey) as? Bool ?? true
-        badgeHideActiveAfterSnapshot = UserDefaults.standard.object(forKey: Self.badgeHideActiveKey) as? Bool ?? true
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }

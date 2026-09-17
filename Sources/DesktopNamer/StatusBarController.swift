@@ -8,8 +8,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let settings: AppSettings
     private let onRename: () -> Void
     private let onRenameSpace: (Space) -> Void
-    private let onPrepareBadges: () -> Void
-    private let onRebuildBadges: () -> Void
+    private let onSyncBadges: () -> Void
     private let onPreviewBadges: () -> Void
     private let onUpdate: () -> Void
     private let onDiagnose: () -> Void
@@ -20,8 +19,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     init(spaces: SpaceManager, names: NameStore, settings: AppSettings,
          onRename: @escaping () -> Void, onRenameSpace: @escaping (Space) -> Void,
-         onPrepareBadges: @escaping () -> Void, onRebuildBadges: @escaping () -> Void,
-         onPreviewBadges: @escaping () -> Void,
+         onSyncBadges: @escaping () -> Void, onPreviewBadges: @escaping () -> Void,
          onUpdate: @escaping () -> Void,
          onDiagnose: @escaping () -> Void) {
         self.spaces = spaces
@@ -29,8 +27,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.settings = settings
         self.onRename = onRename
         self.onRenameSpace = onRenameSpace
-        self.onPrepareBadges = onPrepareBadges
-        self.onRebuildBadges = onRebuildBadges
+        self.onSyncBadges = onSyncBadges
         self.onPreviewBadges = onPreviewBadges
         self.onUpdate = onUpdate
         self.onDiagnose = onDiagnose
@@ -107,21 +104,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let rename = NSMenuItem(title: "이름 바꾸기", action: nil, keyEquivalent: "")
-        let renameMenu = NSMenu()
-        renameMenu.autoenablesItems = false
-        let editAll = NSMenuItem(title: "모두 편집…", action: #selector(rename(_:)), keyEquivalent: "r")
-        editAll.target = self
-        renameMenu.addItem(editAll)
-        renameMenu.addItem(.separator())
-        for space in spaces.spaces where !space.isFullscreen {
-            let item = NSMenuItem(title: "\(space.number.map { String($0) } ?? "") \(names.displayName(for: space))", action: #selector(renameSpace(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = space
-            renameMenu.addItem(item)
-        }
-        rename.submenu = renameMenu
-        menu.addItem(rename)
+        let renameItem = NSMenuItem(title: "이름 편집…", action: #selector(rename(_:)), keyEquivalent: "r")
+        renameItem.target = self
+        menu.addItem(renameItem)
 
         let badge = NSMenuItem(title: "Mission Control에 이름 표시", action: #selector(toggleBadge(_:)), keyEquivalent: "")
         badge.target = self
@@ -133,6 +118,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         display.isEnabled = settings.badgeEnabled
         let displayMenu = NSMenu()
         displayMenu.autoenablesItems = false
+
+        let sync = NSMenuItem(title: "데스크탑 이름 동기화…", action: #selector(syncBadges(_:)), keyEquivalent: "")
+        sync.target = self
+        displayMenu.addItem(sync)
+
+        displayMenu.addItem(.separator())
 
         let cornerItem = NSMenuItem(title: "위치", action: nil, keyEquivalent: "")
         let cornerMenu = NSMenu()
@@ -179,19 +170,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         preview.target = self
         displayMenu.addItem(preview)
 
-        let prepare = NSMenuItem(title: "모든 데스크탑에 이름 준비…", action: #selector(prepareBadges(_:)), keyEquivalent: "")
-        prepare.target = self
-        displayMenu.addItem(prepare)
-
-        let rebuild = NSMenuItem(title: "이름이 안 보일 때: 모두 다시 만들기…", action: #selector(rebuildBadges(_:)), keyEquivalent: "")
-        rebuild.target = self
-        displayMenu.addItem(rebuild)
-
-        let hideActive = NSMenuItem(title: "현재 데스크탑 이름은 화면에 남기지 않기", action: #selector(toggleHideActive(_:)), keyEquivalent: "")
-        hideActive.target = self
-        hideActive.state = settings.badgeHideActiveAfterSnapshot ? .on : .off
-        displayMenu.addItem(hideActive)
-
         let auto = NSMenuItem(title: "앱 시작 시 자동 준비", action: #selector(toggleAutoPrepare(_:)), keyEquivalent: "")
         auto.target = self
         auto.state = settings.badgeAutoPrepare ? .on : .off
@@ -214,19 +192,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let advanced = NSMenuItem(title: "고급", action: nil, keyEquivalent: "")
         let advancedMenu = NSMenu()
         advancedMenu.autoenablesItems = false
-
-        let overlay = NSMenuItem(title: "실험: 화면을 읽어 라벨 덮어쓰기", action: #selector(toggleOverlay(_:)), keyEquivalent: "")
-        overlay.target = self
-        overlay.state = settings.overlayEnabled ? .on : .off
-        advancedMenu.addItem(overlay)
-
-        let always = NSMenuItem(title: "화면 항상 감시 (화면 기록 표시가 계속 뜸)", action: #selector(toggleAlwaysWatch(_:)), keyEquivalent: "")
-        always.target = self
-        always.state = settings.alwaysWatch ? .on : .off
-        always.isEnabled = settings.overlayEnabled
-        advancedMenu.addItem(always)
-
-        advancedMenu.addItem(.separator())
 
         let resetTrackpad = NSMenuItem(title: "트랙패드 제스처 다시 인식", action: #selector(resetTrackpad(_:)), keyEquivalent: "")
         resetTrackpad.target = self
@@ -310,10 +275,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         settings.badgeMainScreenOnly.toggle()
     }
 
-    @objc private func toggleHideActive(_ sender: Any?) {
-        settings.badgeHideActiveAfterSnapshot.toggle()
-    }
-
     @objc private func toggleAutoPrepare(_ sender: Any?) {
         settings.badgeAutoPrepare.toggle()
     }
@@ -322,12 +283,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         settings.badgeMirrorToOtherScreens.toggle()
     }
 
-    @objc private func prepareBadges(_ sender: Any?) {
-        onPrepareBadges()
-    }
-
-    @objc private func rebuildBadges(_ sender: Any?) {
-        onRebuildBadges()
+    @objc private func syncBadges(_ sender: Any?) {
+        onSyncBadges()
     }
 
     @objc private func update(_ sender: Any?) {
@@ -336,14 +293,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func previewBadges(_ sender: Any?) {
         onPreviewBadges()
-    }
-
-    @objc private func toggleOverlay(_ sender: Any?) {
-        settings.overlayEnabled.toggle()
-    }
-
-    @objc private func toggleAlwaysWatch(_ sender: Any?) {
-        settings.alwaysWatch.toggle()
     }
 
     @objc private func toggleLaunchAtLogin(_ sender: Any?) {

@@ -5,18 +5,16 @@ import SwiftUI
 final class RenameWindowController {
     private let spaces: SpaceManager
     private let names: NameStore
-    private let settings: AppSettings
     private var window: NSWindow?
 
-    init(spaces: SpaceManager, names: NameStore, settings: AppSettings) {
+    init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
         self.names = names
-        self.settings = settings
     }
 
     func show() {
         if window == nil {
-            let view = RenameView(spaces: spaces, names: names, settings: settings) { [weak self] in
+            let view = RenameView(spaces: spaces, names: names) { [weak self] in
                 self?.window?.close()
             }
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
@@ -36,7 +34,6 @@ final class RenameWindowController {
 struct RenameView: View {
     @ObservedObject var spaces: SpaceManager
     @ObservedObject var names: NameStore
-    @ObservedObject var settings: AppSettings
     let onDone: () -> Void
 
     var body: some View {
@@ -57,9 +54,6 @@ struct RenameView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-
-            Toggle("Mission Control에 이름 겹쳐 보이기", isOn: $settings.overlayEnabled)
-                .toggleStyle(.checkbox)
 
             HStack {
                 Spacer()

@@ -8,7 +8,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusBar: StatusBarController?
     private var renameWindow: RenameWindowController?
-    private var overlay: MissionControlOverlay?
     private var badges: BadgeManager?
     private let signals = MissionControlSignals()
     private var updater: Updater?
@@ -24,18 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore, settings: settings)
-        overlay = MissionControlOverlay(spaces: spaceManager, names: nameStore)
+        renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore)
         badges = BadgeManager(spaces: spaceManager, names: nameStore)
         signals.isShowing = { [weak self] in self?.badges?.isVisible ?? false }
-        signals.onOpenLikely = { [weak self] reason in
-            self?.badges?.show(reason: reason)
-            self?.overlay?.noteOpenLikely(reason: reason)
-        }
-        signals.onCloseLikely = { [weak self] reason in
-            self?.badges?.hide(reason: reason)
-            self?.overlay?.noteCloseLikely(reason: reason)
-        }
+        signals.onOpenLikely = { [weak self] reason in self?.badges?.show(reason: reason) }
+        signals.onCloseLikely = { [weak self] reason in self?.badges?.hide(reason: reason) }
         signals.start()
         statusBar = StatusBarController(
             spaces: spaceManager,
@@ -43,8 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings,
             onRename: { [weak self] in self?.renameWindow?.show() },
             onRenameSpace: { [weak self] space in self?.promptRename(for: space) },
-            onPrepareBadges: { [weak self] in self?.prepareBadges() },
-            onRebuildBadges: { [weak self] in self?.prepareBadges(rebuild: true) },
+            onSyncBadges: { [weak self] in self?.syncBadges() },
             onPreviewBadges: { [weak self] in self?.badges?.preview() },
             onUpdate: { [weak self] in self?.startUpdate() },
             onDiagnose: { [weak self] in self?.showDiagnostics() }
@@ -62,11 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         badges?.autoPrepare = settings.badgeAutoPrepare
         settings.$badgeAutoPrepare
             .sink { [weak self] auto in self?.badges?.autoPrepare = auto }
-            .store(in: &cancellables)
-
-        badges?.hideActiveBadgeAfterSnapshot = settings.badgeHideActiveAfterSnapshot
-        settings.$badgeHideActiveAfterSnapshot
-            .sink { [weak self] hide in self?.badges?.hideActiveBadgeAfterSnapshot = hide }
             .store(in: &cancellables)
 
         settings.$badgeEnabled
@@ -91,19 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$badgeMirrorToOtherScreens
             .sink { [weak self] mirror in self?.badges?.mirrorToOtherScreens = mirror }
             .store(in: &cancellables)
-
-        settings.$alwaysWatch
-            .sink { [weak self] always in self?.overlay?.alwaysWatch = always }
-            .store(in: &cancellables)
-
-        // 오버레이 설정 반영
-        settings.$overlayEnabled
-            .sink { [weak self] enabled in
-                guard let self, let overlay = self.overlay else { return }
-                _ = self
-                enabled ? overlay.start() : overlay.stop()
-            }
-            .store(in: &cancellables)
     }
 
     /// 최신 코드를 받아 빌드하고 새 버전으로 재시작한다
@@ -113,22 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.start()
     }
 
-    /// 배지가 없는 데스크탑을 돌며 배지를 만든다
-    private func prepareBadges(rebuild: Bool = false) {
+    /// 데스크탑을 한 바퀴 돌며 이름표를 전부 새로 만든다.
+    /// 이름이 안 보일 때 한 번 더 눌러도 되도록, 있는 것까지 싹 다시 만든다.
+    private func syncBadges() {
         guard let badges else { return }
-        let title = rebuild ? "모든 데스크탑 이름 다시 만들기" : "모든 데스크탑에 배지 준비"
-        let report: (String) -> Void = { message in
+        badges.rebuildAllBadges { message in
             let alert = NSAlert()
-            alert.messageText = title
+            alert.messageText = "데스크탑 이름 동기화"
             alert.informativeText = message
             alert.addButton(withTitle: "확인")
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
-        }
-        if rebuild {
-            badges.rebuildAllBadges(completion: report)
-        } else {
-            badges.prepareAllBadges(completion: report)
         }
     }
 
@@ -154,10 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 진단 정보를 보여주고 클립보드로 복사할 수 있게 한다.
     private func showDiagnostics() {
-        guard let overlay else { return }
         var text = badges?.diagnostics() ?? ""
-        text += "\nMission Control 동작 감지: \(signals.note), 마지막: \(signals.lastOpenNote)\n\n"
-        text += overlay.diagnostics()
+        text += "\n\nMission Control 동작 감지: \(signals.note)\n마지막: \(signals.lastOpenNote)"
         let alert = NSAlert()
         alert.messageText = "문제 진단"
         alert.informativeText = "아래 내용을 복사해서 보내주세요."
@@ -185,7 +151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        overlay?.stop()
         badges?.stop()
         signals.stop()
         spaceManager.stop()
