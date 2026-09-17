@@ -223,18 +223,18 @@ final class MissionControlOverlay {
         streamStarting = true
         let stream = self.stream
         Task { [weak self] in
+            let message: String?
             do {
                 try await stream.start(strip: strip)
-                await MainActor.run {
-                    self?.streamStarting = false
-                    self?.log("화면 스트림 시작")
-                }
+                message = nil
             } catch {
-                let message = error.localizedDescription
-                await MainActor.run {
-                    self?.streamStarting = false
-                    self?.log("화면 스트림 시작 실패: \(message)")
-                }
+                message = error.localizedDescription
+            }
+            let note = message
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.streamStarting = false
+                self.log(note.map { "화면 스트림 시작 실패: \($0)" } ?? "화면 스트림 시작")
             }
         }
     }
