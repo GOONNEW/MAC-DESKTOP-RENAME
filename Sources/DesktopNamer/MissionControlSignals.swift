@@ -14,8 +14,7 @@ final class MissionControlSignals {
 
     private let trackpad = TrackpadMonitor()
     private let keyboard = MissionControlTrigger()
-    private var mouseMonitor: Any?
-    private var lastMouseLocation: NSPoint?
+    private var scrollMonitor: Any?
     /// 한 번의 쓸기에서 제스처가 여러 번 잡히므로, 이 시간 안의 재감지는 같은 동작으로 본다
     private var lastGestureAt = Date.distantPast
     private var trackpadWorks = false
@@ -59,23 +58,14 @@ final class MissionControlSignals {
         })
         if let monitor { inputMonitors.append(monitor) }
 
-        // Mission Control이 닫히면 커서가 평소 화면 위에서 움직인다. 크게 움직이면 닫힌 것으로 본다.
-        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .scrollWheel], handler: { [weak self] event in
-            guard let self, self.isShowing?() == true else {
-                self?.lastMouseLocation = NSEvent.mouseLocation
-                return
-            }
-            if event.type == .scrollWheel {
-                self.onCloseLikely?("스크롤")
-                return
-            }
-            let now = NSEvent.mouseLocation
-            defer { self.lastMouseLocation = now }
-            guard let previous = self.lastMouseLocation else { return }
-            let distance = hypot(now.x - previous.x, now.y - previous.y)
-            if distance > 120 { self.onCloseLikely?("마우스 이동") }
+        // 스크롤은 평소 화면에서 작업 중이라는 뜻이다.
+        // (마우스를 움직였다고 닫힌 것으로 보지는 않는다. Mission Control 안에서
+        //  썸네일을 훑어보는 동안 이름이 먼저 사라져 버리기 때문이다.)
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [weak self] _ in
+            guard let self, self.isShowing?() == true else { return }
+            self.onCloseLikely?("스크롤")
         })
-        if let mouseMonitor { inputMonitors.append(mouseMonitor) }
+        if let scrollMonitor { inputMonitors.append(scrollMonitor) }
     }
 
     func stop() {
@@ -103,7 +93,6 @@ final class MissionControlSignals {
             return
         }
         lastOpenNote = "\(reason) (\(formatter.string(from: Date())))"
-        lastMouseLocation = NSEvent.mouseLocation
         onOpenLikely?(reason)
     }
 }
