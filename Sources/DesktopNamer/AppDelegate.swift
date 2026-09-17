@@ -125,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 진단 정보를 보여주고 클립보드로 복사할 수 있게 한다.
     private func showDiagnostics() {
         var text = badges?.diagnostics() ?? ""
-        text += "\n\nMission Control 동작 감지: \(signals.note)\n마지막: \(signals.lastOpenNote)"
+        text += "\n\nMission Control 동작 감지\n  \(signals.note)\n  마지막 여는 동작: \(signals.lastOpenNote)"
         let alert = NSAlert()
         alert.messageText = "문제 진단"
         alert.informativeText = "아래 내용을 복사해서 보내주세요."

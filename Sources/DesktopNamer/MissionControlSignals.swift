@@ -2,13 +2,13 @@ import AppKit
 
 /// Mission Control이 열린 순간과 닫힌 순간을 알려준다.
 ///
-/// 두 가지를 함께 쓴다.
-/// 1. 제스처/키 (빠름, 부정확): 세 손가락 위로 쓸기, ⌃↑, Mission Control 키.
+/// 세 가지를 함께 쓴다.
+/// 1. WindowServer 알림 (가장 정확): Mission Control이 열리고 닫힐 때 macOS가 직접 알려준다.
+///    이게 한 번이라도 오면 이것만 믿는다.
+/// 2. 제스처/키 (가장 빠름): 세 손가락 위로 쓸기, ⌃↑, Mission Control 키.
 ///    macOS는 Mission Control을 열 때 지금 화면을 한 번 찍어 썸네일로 쓰므로,
 ///    그 순간보다 이름표가 늦으면 현재 데스크탑 썸네일에 안 찍힌다. 그래서 빠른 신호가 필요하다.
-/// 2. Dock 창 개수 확인 (0.5초마다, 정확): 실제로 열려 있는지 확인한다.
-///    이쪽이 "열려 있다"고 하는 동안에는 클릭·키 입력 같은 약한 닫힘 신호를 무시한다.
-///    아직 배우지 못한 상태면 예전처럼 1번만으로 판단한다.
+/// 3. 화면 지표 (알림이 안 올 때의 대비책): 0.5초마다 창 상태를 재서 열림/닫힘을 가린다.
 final class MissionControlSignals {
     /// 메인 스레드에서 호출된다.
     var onOpenLikely: ((String) -> Void)?
@@ -58,6 +58,10 @@ final class MissionControlSignals {
         }
         trackpadWorks = trackpad.startMonitoring()
 
+        // WindowServer가 Mission Control 열림/닫힘을 직접 알려준다. 가장 정확한 신호다.
+        SkyLight.onMissionControlEvent = { [weak self] type in self?.handleWindowServerEvent(type) }
+        probe.noteRegistered(SkyLight.registerMissionControlNotifications())
+
         keyboard.onTrigger = { [weak self] reason in self?.open(reason) }
         keyboard.start(includeGestures: !trackpadWorks)
 
@@ -94,6 +98,7 @@ final class MissionControlSignals {
 
     func stop() {
         isRunning = false
+        SkyLight.onMissionControlEvent = nil
         trackpad.stopMonitoring()
         keyboard.stop()
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
@@ -104,6 +109,24 @@ final class MissionControlSignals {
         pollTimer = nil
     }
 
+    // MARK: - WindowServer 알림
+
+    /// 1204 Mission Control 열림 / 1205 앱 창 보기 / 1206 데스크탑 보기 / 1207 닫힘
+    private func handleWindowServerEvent(_ type: UInt32) {
+        probe.noteNotification(type)
+        switch type {
+        case 1204:
+            open("Mission Control 알림")
+        case 1205:
+            // 앱 창 보기(App Exposé)는 데스크탑 썸네일이 아니므로 이름을 띄우지 않는다
+            close("앱 창 보기", strong: true)
+        case 1206:
+            close("데스크탑 보기", strong: true)
+        default:
+            close("Mission Control 닫힘 알림", strong: true)
+        }
+    }
+
     // MARK: - 주기 확인
 
     private func poll() {
@@ -111,7 +134,7 @@ final class MissionControlSignals {
         guard showing else {
             closedPolls = 0
             // 닫은 직후에는 잔상이 남을 수 있으므로 조금 지난 뒤부터 기준선을 잰다
-            if Date().timeIntervalSince(lastClosedAt) > 1.5 { probe.noteQuiet() }
+            if probe.usesMetrics, Date().timeIntervalSince(lastClosedAt) > 1.5 { probe.noteQuiet() }
             // 차이가 뚜렷하게 배워진 경우에만, 제스처를 놓쳤어도 열린 것을 알아챈다
             // (Mission Control 키, 핫코너, Dock 아이콘으로 연 경우)
             if probe.looksActiveStrict() == true,
@@ -155,10 +178,11 @@ final class MissionControlSignals {
         lastOpenNote = "\(reason) (\(formatter.string(from: Date())))"
         onOpenLikely?(reason)
 
-        // 열린 직후의 Dock 창 개수를 재서 배운다. 애니메이션이 시작될 시간을 준다.
+        // 열린 직후의 화면 지표를 재서 배운다. 애니메이션이 시작될 시간을 준다.
+        guard probe.usesMetrics else { return }
         for delay in [0.35, 0.7, 1.2] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, self.isShowing?() == true else { return }
+                guard let self, self.probe.usesMetrics, self.isShowing?() == true else { return }
                 self.probe.noteOpen()
             }
         }

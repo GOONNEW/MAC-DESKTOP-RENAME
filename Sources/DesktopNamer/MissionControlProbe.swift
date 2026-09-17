@@ -3,118 +3,229 @@ import CoreGraphics
 
 /// Mission Control이 "정말로" 열려 있는지 확인한다.
 ///
-/// macOS에는 Mission Control 상태를 알려주는 공개 API가 없다. 그래서 지금까지는
-/// 제스처로 열림을, 클릭/키 입력으로 닫힘을 추측했는데 자주 어긋났다.
-/// (구경하는 도중에 이름이 꺼지거나, 닫았는데 이름이 남는 문제)
+/// 가장 확실한 방법은 WindowServer가 직접 보내는 알림(1204 열림 / 1207 닫힘)이다.
+/// 그게 오면 그것만 믿는다. (`SkyLight.registerMissionControlNotifications`)
 ///
-/// 대신 이 클래스는 관찰로 판단한다. Mission Control이 켜지면 Dock 프로세스가 화면 위에
-/// 창을 몇 개 더 만든다. 몇 개가 늘어나는지는 macOS 버전과 모니터 수에 따라 다르므로
-/// 숫자를 미리 정해 두지 않고 실제로 재서 배운다.
-///
-/// - 평소 화면일 때 본 개수 중 가장 작은 값을 기준선으로 삼는다.
-/// - 열렸다고 판단한 직후에 본 개수를 열림 표본으로 삼는다.
-/// - 열림 표본이 기준선보다 크면 "보정 완료". 그 뒤로는 개수만 보고 판단한다.
-///
-/// 이 macOS에서 개수가 달라지지 않으면 보정이 끝나지 않고, 그때는 `looksActive()`가
-/// nil(모름)을 돌려준다. 호출하는 쪽은 예전처럼 제스처와 입력으로만 판단하면 되므로
-/// 상황이 나빠지는 일은 없다.
+/// 알림이 오지 않는 macOS를 대비해, 화면 상태를 재는 지표도 함께 모은다.
+/// 어떤 지표가 Mission Control 상태를 구분하는지는 macOS 버전마다 다르므로
+/// 여러 개를 동시에 재 두고, 평소와 열림이 확실히 갈리는 지표를 스스로 고른다.
+/// (첫 시도에서 쓴 "Dock 창 개수"는 이 맥에서 평소 1개, 열림 1개로 구분이 안 됐다.)
 final class MissionControlProbe {
-    /// 평소 화면에서 관찰한 Dock 창 개수들 (오래된 것부터 밀려난다)
-    private var quietCounts: [Int] = []
-    /// Mission Control이 열렸을 때 관찰한 Dock 창 개수들
-    private var openCounts: [Int] = []
-    private(set) var lastCount = 0
 
-    /// 최근 표본의 중앙값을 쓴다. 평균이나 최솟값과 달리 이상한 표본 하나에 휘둘리지 않고,
-    /// 오래된 표본이 밀려나므로 환경이 바뀌면 스스로 다시 배운다.
-    var quietBaseline: Int? { Self.median(quietCounts) }
-    var openSample: Int? { Self.median(openCounts) }
+    // MARK: - 지표
 
-    private static func median(_ values: [Int]) -> Int? {
+    /// 한 번에 재는 값들. 이름은 진단 창에 그대로 나온다.
+    static let metricNames = [
+        "화면 위 창 수",
+        "Dock 창 수",
+        "레이어 1 이상 창",
+        "가장 높은 레이어",
+        "화면 덮는 창 수",
+        "창 가진 앱 수",
+        "Dock이 최상위",
+        "공간 수",
+    ]
+
+    /// 지금 값을 한 번에 잰다. 창 목록은 한 번만 읽는다.
+    static func sample() -> [Int] {
+        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? []
+
+        var dockWindows = 0
+        var aboveNormal = 0
+        var maxLayer = -9999
+        var covering = 0
+        var owners = Set<String>()
+
+        // 주 화면 넓이의 70% 이상을 덮는 창을 "화면 덮는 창"으로 본다
+        let screenArea = NSScreen.screens.first.map { $0.frame.width * $0.frame.height } ?? 0
+
+        for info in list {
+            let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+            let owner = info[kCGWindowOwnerName as String] as? String ?? ""
+            owners.insert(owner)
+            if owner == "Dock" { dockWindows += 1 }
+            if layer >= 1 { aboveNormal += 1 }
+            maxLayer = max(maxLayer, layer)
+            if screenArea > 0,
+               let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+               let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+               bounds.width * bounds.height >= screenArea * 0.7 {
+                covering += 1
+            }
+        }
+
+        let frontIsDock = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.dock" ? 1 : 0
+        let spaceCount = SkyLight.managedDisplaySpaces().reduce(0) { total, display in
+            total + ((display["Spaces"] as? [[String: Any]])?.count ?? 0)
+        }
+
+        return [list.count, dockWindows, aboveNormal, maxLayer, covering, owners.count, frontIsDock, spaceCount]
+    }
+
+    // MARK: - 알림 (가장 확실한 신호)
+
+    /// "열림(1204)" 알림을 한 번이라도 받았는가.
+    ///
+    /// 열림 알림을 받아 본 적이 있어야만 이 신호를 믿는다. 닫힘 알림만 오는 macOS에서
+    /// 이 값을 켜 버리면 "항상 닫혀 있다"고 판단해 이름이 아예 안 뜨게 된다.
+    private(set) var notificationsWork = false
+    private(set) var notificationCount = 0
+    private(set) var lastNotification: UInt32?
+    private(set) var registerNote = "등록 전"
+    /// 알림 기준으로 지금 열려 있는가
+    private(set) var openByNotification = false
+
+    /// 알림이 오지 않는 동안에만 화면 지표를 재면 된다
+    var usesMetrics: Bool { !notificationsWork }
+
+    func noteRegistered(_ note: String) {
+        registerNote = note
+    }
+
+    /// 1204 열림 / 1205 앱 창 보기 / 1206 데스크탑 보기 / 1207 닫힘
+    func noteNotification(_ type: UInt32) {
+        notificationCount += 1
+        lastNotification = type
+        if type == 1204 { notificationsWork = true }
+        openByNotification = (type == 1204)
+    }
+
+    // MARK: - 지표 학습
+
+    private var quiet: [[Int]] = Array(repeating: [], count: metricNames.count)
+    private var open: [[Int]] = Array(repeating: [], count: metricNames.count)
+    private var last: [Int] = Array(repeating: 0, count: metricNames.count)
+
+    private static let quietWindow = 60
+    private static let openWindow = 20
+
+    func noteQuiet() {
+        let values = Self.sample()
+        last = values
+        for index in values.indices {
+            quiet[index].append(values[index])
+            if quiet[index].count > Self.quietWindow {
+                quiet[index].removeFirst(quiet[index].count - Self.quietWindow)
+            }
+        }
+    }
+
+    func noteOpen() {
+        let values = Self.sample()
+        last = values
+        for index in values.indices {
+            open[index].append(values[index])
+            if open[index].count > Self.openWindow {
+                open[index].removeFirst(open[index].count - Self.openWindow)
+            }
+        }
+    }
+
+    func reset() {
+        quiet = Array(repeating: [], count: Self.metricNames.count)
+        open = Array(repeating: [], count: Self.metricNames.count)
+    }
+
+    /// 고른 지표: 번호, 기준값, 열렸을 때 값이 더 큰지, 평소와 열림의 차이
+    private struct Choice {
+        let index: Int
+        let threshold: Int
+        let openIsHigher: Bool
+        let gap: Int
+    }
+
+    private static func percentile(_ values: [Int], _ fraction: Double) -> Int? {
         guard !values.isEmpty else { return nil }
         let sorted = values.sorted()
-        return sorted[sorted.count / 2]
+        let position = Int((Double(sorted.count - 1) * fraction).rounded())
+        return sorted[position]
     }
 
-    /// 배운 값만으로 "지금 열려 있나"를 판단할 수 있는 상태인가
-    var isCalibrated: Bool {
-        guard let quietBaseline, let openSample else { return false }
-        return openSample > quietBaseline && quietCounts.count >= 3
-    }
-
-    /// 제스처 없이 열림 자체를 알아채도 될 만큼 차이가 뚜렷한가.
-    ///
-    /// Dock 아이콘 우클릭 메뉴처럼 창이 하나 늘어나는 경우와 헷갈리면
-    /// 평소 화면에 큰 글씨가 떠 버린다. 그래서 여는 쪽은 더 엄격하게 본다.
-    var isStronglyCalibrated: Bool {
-        guard let quietBaseline, let openSample else { return false }
-        return openSample - quietBaseline >= 2 && openCounts.count >= 3 && quietCounts.count >= 5
-    }
-
-    /// "열렸다"로 인정할 창 개수. 평소와 열림의 중간쯤으로 잡아 잡음을 피한다.
-    private var threshold: Int? {
-        guard let quietBaseline, let openSample, openSample > quietBaseline else { return nil }
-        return max(quietBaseline + 1, quietBaseline + (openSample - quietBaseline + 1) / 2)
-    }
-
-    /// 지금 화면 위에 떠 있는 Dock 소유 창의 개수.
-    ///
-    /// 창 "제목"을 읽지 않으므로 화면 기록 권한이 필요 없다.
-    /// `.excludeDesktopElements`로 바탕화면 그림과 아이콘 창은 빼서, 평소 개수가 안정적이다.
-    static func dockWindowCount() -> Int {
-        guard let list = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
-        ) as? [[String: Any]] else { return 0 }
-        var total = 0
-        for info in list where (info[kCGWindowOwnerName as String] as? String) == "Dock" {
-            total += 1
+    /// 평소와 열림이 겹치지 않는 지표 중 차이가 가장 큰 것을 고른다.
+    private var choice: Choice? {
+        guard quiet[0].count >= 10, open[0].count >= 3 else { return nil }
+        var best: Choice?
+        for index in Self.metricNames.indices {
+            guard let quietHigh = Self.percentile(quiet[index], 0.9),
+                  let quietLow = Self.percentile(quiet[index], 0.1),
+                  let openMedian = Self.percentile(open[index], 0.5) else { continue }
+            let candidate: Choice
+            if openMedian > quietHigh {
+                candidate = Choice(index: index,
+                                   threshold: max(quietHigh + 1, quietHigh + (openMedian - quietHigh + 1) / 2),
+                                   openIsHigher: true,
+                                   gap: openMedian - quietHigh)
+            } else if openMedian < quietLow {
+                candidate = Choice(index: index,
+                                   threshold: min(quietLow - 1, quietLow - (quietLow - openMedian + 1) / 2),
+                                   openIsHigher: false,
+                                   gap: quietLow - openMedian)
+            } else {
+                continue
+            }
+            if best == nil || candidate.gap > best!.gap { best = candidate }
         }
-        return total
+        return best
     }
 
-    /// 평소 화면이라고 확신할 때 부른다
-    func noteQuiet() {
-        let count = Self.dockWindowCount()
-        lastCount = count
-        quietCounts.append(count)
-        if quietCounts.count > 40 { quietCounts.removeFirst(quietCounts.count - 40) }
+    var isCalibrated: Bool { choice != nil }
+
+    /// 제스처 없이 열림 자체를 알아채도 될 만큼 확실한가.
+    /// 평소 값이 흔들리지 않고(같은 값만 나오고) 열림 표본도 충분해야 한다.
+    var isStronglyCalibrated: Bool {
+        guard let choice else { return false }
+        guard open[choice.index].count >= 5, quiet[choice.index].count >= 20 else { return false }
+        let low = Self.percentile(quiet[choice.index], 0.02)
+        let high = Self.percentile(quiet[choice.index], 0.98)
+        return low == high
     }
 
-    /// Mission Control이 열렸다고 판단한 직후에 부른다
-    func noteOpen() {
-        let count = Self.dockWindowCount()
-        lastCount = count
-        openCounts.append(count)
-        if openCounts.count > 12 { openCounts.removeFirst(openCounts.count - 12) }
-    }
+    // MARK: - 판정
 
-    /// 지금 열려 있는 것으로 보이는가. 아직 배우지 못했으면 nil(모름).
+    /// 지금 열려 있는 것으로 보이는가. 알 수 없으면 nil.
     func looksActive() -> Bool? {
-        guard isCalibrated, let threshold else { return nil }
-        let count = Self.dockWindowCount()
-        lastCount = count
-        return count >= threshold
+        if notificationsWork { return openByNotification }
+        guard let choice else { return nil }
+        let values = Self.sample()
+        last = values
+        let value = values[choice.index]
+        return choice.openIsHigher ? value >= choice.threshold : value <= choice.threshold
     }
 
     /// 제스처 없이 "열렸다"고 단정해도 될 만큼 확실한가. 아니면 nil.
     func looksActiveStrict() -> Bool? {
+        if notificationsWork { return openByNotification }
         guard isStronglyCalibrated else { return nil }
         return looksActive()
     }
 
-    /// 배운 값을 버리고 처음부터 다시 관찰한다
-    func reset() {
-        quietCounts.removeAll()
-        openCounts.removeAll()
-    }
+    // MARK: - 진단
 
     var note: String {
-        let quiet = quietBaseline.map(String.init) ?? "-"
-        let open = openSample.map(String.init) ?? "-"
-        let state = isStronglyCalibrated ? "보정됨(열림 감지까지)"
-            : isCalibrated ? "보정됨(닫힘 확인만)" : "보정 전 (제스처로만 판단)"
-        let limit = threshold.map(String.init) ?? "-"
-        return "Dock 창 지금 \(lastCount)개 / 평소 \(quiet) / 열림 \(open) / 기준 \(limit) / \(state)"
-            + " / 표본 평소 \(quietCounts.count)개, 열림 \(openCounts.count)개"
+        var lines: [String] = []
+        lines.append("WindowServer 알림 등록: \(registerNote)")
+        let last = lastNotification.map(String.init) ?? "없음"
+        if notificationsWork {
+            lines.append("알림 \(notificationCount)회 수신 (마지막 \(last)) → 이 신호만 사용, 지금 \(openByNotification ? "열림" : "닫힘")")
+        } else {
+            lines.append("열림 알림 없음 (수신 \(notificationCount)회, 마지막 \(last)) → 화면 지표로 판단")
+        }
+        let picked = choice
+        if let picked {
+            lines.append("고른 지표: \(Self.metricNames[picked.index]) "
+                + "(\(picked.openIsHigher ? "열리면 증가" : "열리면 감소"), 기준 \(picked.threshold), 차이 \(picked.gap))"
+                + (isStronglyCalibrated ? " / 열림 감지까지 가능" : " / 닫힘 확인만"))
+        } else {
+            lines.append("고른 지표: 없음 (평소와 열림이 구분되는 지표를 아직 못 찾음)")
+        }
+        lines.append("지표별 값 — 지금 / 평소(10~90%) / 열림(중앙값) / 표본 평소 \(quiet[0].count)개, 열림 \(open[0].count)개")
+        for index in Self.metricNames.indices {
+            let low = Self.percentile(quiet[index], 0.1).map(String.init) ?? "-"
+            let high = Self.percentile(quiet[index], 0.9).map(String.init) ?? "-"
+            let openMedian = Self.percentile(open[index], 0.5).map(String.init) ?? "-"
+            let mark = picked?.index == index ? " ←" : ""
+            lines.append("  \(Self.metricNames[index]): \(last[index]) / \(low)~\(high) / \(openMedian)\(mark)")
+        }
+        return lines.joined(separator: "\n  ")
     }
 }
