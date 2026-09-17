@@ -143,9 +143,6 @@ final class BadgeManager {
         badges.removeAll()
         fields.removeAll()
         removeMirrors()
-        activeLabelPanel?.orderOut(nil)
-        activeLabelPanel = nil
-        activeLabelField = nil
         isVisible = false
     }
 
@@ -184,78 +181,11 @@ final class BadgeManager {
 
     private func setVisible(_ visible: Bool) {
         isVisible = visible
-        // 지금 있는 데스크탑은 Mission Control에서 축소되지 않고 실제 크기로 보인다.
-        // 그 배지를 그대로 띄우면 화면 위에 크게 떠 버리므로, 대신 썸네일 줄 위에 작게 그린다.
-        let activeUUID = spaces.activeSpace?.uuid
         for (uuid, panels) in badges {
-            let show = visible && hasName(uuid) && uuid != activeUUID
-            panels.forEach { $0.alphaValue = show ? 1 : 0 }
+            let alpha: CGFloat = visible && hasName(uuid) ? 1 : 0
+            panels.forEach { $0.alphaValue = alpha }
         }
-        updateActiveThumbnailLabel(visible: visible)
         updateMirrors(visible: visible)
-    }
-
-    // MARK: - 현재 데스크탑의 썸네일 이름표
-
-    private var activeLabelPanel: NSPanel?
-    private var activeLabelField: NSTextField?
-
-    /// Mission Control 썸네일 줄에서 현재 데스크탑 자리에 이름을 작게 그린다.
-    /// 그 데스크탑은 축소되지 않아 배지가 썸네일에 찍히지 않기 때문이다.
-    private func updateActiveThumbnailLabel(visible: Bool) {
-        guard visible,
-              let screen = NSScreen.screens.first,
-              let active = spaces.activeSpace,
-              let number = active.number,
-              let name = names.customName(for: active) else {
-            activeLabelPanel?.orderOut(nil)
-            return
-        }
-
-        // 썸네일 줄에 놓이는 항목 수 (전체 화면 공간 포함)
-        let items = spaces.spaces.count
-        guard items > 0 else { return }
-        // 현재 데스크탑이 몇 번째 자리인지 (전체 화면 공간이 앞에 올 수 있다)
-        guard let index = spaces.spaces.firstIndex(where: { $0.uuid == active.uuid }) else { return }
-        _ = number
-
-        // 썸네일 줄은 화면 위쪽 약 19% 높이에 가로로 균등 배치된다
-        let stripHeight = screen.frame.height * 0.19
-        let slotWidth = screen.frame.width / CGFloat(items)
-        let centerX = screen.frame.minX + slotWidth * (CGFloat(index) + 0.5)
-        // 썸네일 아래쪽(라벨 자리보다 약간 위)에 놓는다
-        let centerY = screen.frame.maxY - stripHeight * 0.72
-
-        let panel: NSPanel
-        let field: NSTextField
-        if let existing = activeLabelPanel, let existingField = activeLabelField {
-            panel = existing
-            field = existingField
-        } else {
-            let (newPanel, newField) = makePanel(on: screen, text: name)
-            newPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-            activeLabelPanel = newPanel
-            activeLabelField = newField
-            panel = newPanel
-            field = newField
-        }
-
-        field.stringValue = name
-        // 썸네일 폭에 맞춰 작게
-        let pointSize = max(9, min(15, slotWidth * 0.11))
-        field.font = .systemFont(ofSize: pointSize, weight: .bold)
-        field.sizeToFit()
-        let padding = (pointSize * 0.55).rounded()
-        let width = min(field.frame.width + padding * 2, slotWidth * 0.9)
-        let height = field.frame.height + padding * 0.7
-        field.frame = CGRect(x: padding, y: (height - field.frame.height) / 2,
-                             width: width - padding * 2, height: field.frame.height)
-        panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        (panel.contentView?.layer)?.cornerRadius = (height * 0.3).rounded()
-        panel.setFrame(CGRect(x: centerX - width / 2, y: centerY - height / 2,
-                              width: width, height: height), display: true)
-        panel.alphaValue = 1
-        panel.orderFrontRegardless()
     }
 
     // MARK: - 보조 화면 미러
