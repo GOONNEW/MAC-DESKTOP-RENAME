@@ -181,9 +181,14 @@ final class BadgeManager {
 
     private func setVisible(_ visible: Bool) {
         isVisible = visible
+        activeFadeWork?.cancel()
         for (uuid, panels) in badges {
             let alpha: CGFloat = visible && hasName(uuid) ? 1 : 0
-            panels.forEach { $0.alphaValue = alpha }
+            panels.forEach { panel in
+                // 사라지는 애니메이션이 진행 중일 수 있으므로 확실히 끊고 값을 넣는다
+                panel.animator().alphaValue = alpha
+                panel.alphaValue = alpha
+            }
         }
         updateMirrors(visible: visible)
         if visible { scheduleActiveBadgeFadeOut() }
@@ -192,10 +197,12 @@ final class BadgeManager {
     /// 현재 데스크탑은 Mission Control에서 축소되지 않아 배지가 화면에 크게 보인다.
     /// macOS가 썸네일을 찍을 시간만 준 뒤 그 배지만 숨겨, 화면이 가려지지 않게 한다.
     private func scheduleActiveBadgeFadeOut() {
-        guard hideActiveBadgeAfterSnapshot, let uuid = spaces.activeSpace?.uuid else { return }
+        guard hideActiveBadgeAfterSnapshot else { return }
         activeFadeWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.isVisible else { return }
+            // 예약 시점이 아니라 실행 시점의 현재 데스크탑을 숨긴다
+            guard let uuid = self.spaces.activeSpace?.uuid else { return }
             self.badges[uuid]?.forEach { panel in
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0.15
