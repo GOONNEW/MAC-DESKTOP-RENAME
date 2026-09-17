@@ -25,7 +25,8 @@ final class MissionControlTrigger {
         guard tap == nil else { return true }
         var mask: CGEventMask = 1 << CGEventType.keyDown.rawValue
         if includeGestures {
-            for type in [Self.beginGesture, Self.gesture, Self.magnify, Self.swipe] {
+            // 확대(magnify)는 두 손가락 핀치라 Mission Control과 무관하므로 넣지 않는다
+            for type in [Self.beginGesture, Self.gesture, Self.swipe] {
                 mask |= 1 << CGEventMask(type)
             }
         }
@@ -76,15 +77,25 @@ final class MissionControlTrigger {
             } else if keyCode == 126, event.flags.contains(.maskControl) {
                 fire("⌃↑")
             }
-        case Self.beginGesture, Self.gesture, Self.swipe, Self.magnify:
-            // 손가락 개수를 알 수 있으면 3개 이상일 때만 (두 손가락 스크롤에는 반응하지 않도록)
-            let count = NSEvent(cgEvent: event)?.allTouches().count ?? 0
-            lastTouchCount = count
-            if count >= 3 {
-                fire("트랙패드 \(count)손가락 제스처")
-            } else if count == 0 {
-                fire("트랙패드 제스처")
+        case Self.beginGesture, Self.gesture, Self.swipe:
+            let nsEvent = NSEvent(cgEvent: event)
+            // CGEvent를 NSEvent로 바꾸면 손가락 정보가 사라지는 경우가 많다.
+            // 그럴 때는 트랙패드 감시기가 방금 본 손가락 개수를 대신 쓴다.
+            let reported = nsEvent?.allTouches().count ?? 0
+            let fingers = reported > 0 ? reported : TrackpadMonitor.lastCount
+            lastTouchCount = fingers
+            if fingers >= 3 {
+                fire("트랙패드 \(fingers)손가락 제스처")
+                return
             }
+            // 1~2개면 두 손가락 스크롤 같은 다른 동작이다. 반응하지 않는다.
+            guard fingers == 0 else { return }
+            // 개수를 끝내 알 수 없을 때만, 세로 방향 "쓸기"로 한정해 인정한다.
+            // 두 손가락 스크롤은 .scrollWheel이라 여기로 오지 않고,
+            // 좌우 페이지 넘김은 deltaX만 움직이므로 걸러진다.
+            guard type.rawValue == Self.swipe, let nsEvent,
+                  nsEvent.deltaY != 0, nsEvent.deltaX == 0 else { return }
+            fire("트랙패드 세로 쓸기")
         case CGEventType.tapDisabledByTimeout.rawValue, CGEventType.tapDisabledByUserInput.rawValue:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         default:

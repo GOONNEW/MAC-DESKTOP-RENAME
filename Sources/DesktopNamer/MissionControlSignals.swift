@@ -26,6 +26,7 @@ final class MissionControlSignals {
 
     var note: String {
         "트랙패드 \(trackpad.diagnostics) / 키보드 \(keyboard.lastNote)"
+            + (keyboard.lastTouchCount >= 0 ? ", 마지막 제스처 손가락 \(keyboard.lastTouchCount)개" : "")
     }
 
     func start() {

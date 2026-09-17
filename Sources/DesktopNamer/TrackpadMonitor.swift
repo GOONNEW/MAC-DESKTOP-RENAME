@@ -45,6 +45,8 @@ final class TrackpadMonitor {
 
     // 진단
     private(set) static var lastCount = 0
+    /// 그중 실제로 닿아 있던 손가락 수
+    private(set) static var lastTouching = 0
     private(set) static var lastY: Float = -1
     private(set) static var lastRise: Float = 0
     static var swipeCount = 0
@@ -113,6 +115,30 @@ final class TrackpadMonitor {
         return sum / Float(count)
     }
 
+    /// 실제로 트랙패드에 "닿아 있는" 손가락들의 y 좌표만 골라낸다.
+    ///
+    /// MultitouchSupport가 알려주는 손가락 개수에는 트랙패드 위에 살짝 떠 있거나
+    /// 방금 뗀 손가락도 들어간다. 그대로 세면 두 손가락으로 쓸었는데 3개로 잡혀
+    /// Mission Control 제스처로 오인한다.
+    ///
+    /// state 필드는 y 좌표보다 16바이트 앞에 있고, 값의 뜻은 다음과 같다.
+    /// 1 추적 안 함, 2 범위 진입, 3 떠 있음, 4 닿기 시작, 5 닿아 있음,
+    /// 6 떼는 중, 7 머무는 중, 8 범위 밖. 이 중 4와 5만 진짜로 누른 손가락이다.
+    private static func touchingYs(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> [Float] {
+        var states: [Int32] = []
+        var ys: [Float] = []
+        for index in 0..<count {
+            let base = index * candidate.stride
+            states.append(touches.load(fromByteOffset: base + candidate.yOffset - 16, as: Int32.self))
+            ys.append(touches.load(fromByteOffset: base + candidate.yOffset, as: Float.self))
+        }
+        // 값이 예상 범위(1~8)를 벗어나면 그 자리가 state가 아니다. 그때는 전부 센다.
+        guard states.allSatisfy({ $0 >= 1 && $0 <= 8 }) else { return ys }
+        let touching = zip(states, ys).filter { $0.0 == 4 || $0.0 == 5 }.map { $0.1 }
+        // 하나도 안 걸리면 판단이 안 되는 상황이므로 원래대로 전부 센다
+        return touching.isEmpty ? ys : touching
+    }
+
     private static let callback: ContactCallback = { _, touches, touchCount, _, _ in
         let count = Int(touchCount)
         lastCount = count
@@ -163,14 +189,16 @@ final class TrackpadMonitor {
         }
         guard let found = layout else { return 0 }
 
-        guard count >= 3 else {
+        let ys = touchingYs(touches, count: count, candidate: found)
+        lastTouching = ys.count
+        guard ys.count >= 3 else {
             startY = nil
             startCount = 0
             fired = false
             return 0
         }
 
-        let y = averageY(touches, count: count, candidate: found)
+        let y = ys.reduce(0, +) / Float(ys.count)
         guard y.isFinite, y >= -0.05, y <= 1.05 else {
             badReads += 1
             if badReads > 30 {
@@ -184,9 +212,9 @@ final class TrackpadMonitor {
         badReads = 0
         lastY = y
 
-        if startY == nil || count != startCount {
+        if startY == nil || ys.count != startCount {
             startY = y
-            startCount = count
+            startCount = ys.count
             fired = false
             return 0
         }
@@ -198,7 +226,7 @@ final class TrackpadMonitor {
         if abs(rise) >= minimumRise {
             fired = true
             swipeCount += 1
-            let fingers = count
+            let fingers = ys.count
             let up = rise > 0
             DispatchQueue.main.async {
                 up ? onSwipeUp?(fingers) : onSwipeDown?(fingers)
@@ -249,6 +277,6 @@ final class TrackpadMonitor {
     }
 
     var diagnostics: String {
-        "\(note), \(Self.layoutNote), 마지막 손가락 \(Self.lastCount)개 y=\(String(format: "%.3f", Self.lastY)) 이동 \(String(format: "%.3f", Self.lastRise)), 위로 쓸기 \(Self.swipeCount)회"
+        "\(note), \(Self.layoutNote), 마지막 손가락 \(Self.lastCount)개(닿음 \(Self.lastTouching)개) y=\(String(format: "%.3f", Self.lastY)) 이동 \(String(format: "%.3f", Self.lastRise)), 위로 쓸기 \(Self.swipeCount)회"
     }
 }
