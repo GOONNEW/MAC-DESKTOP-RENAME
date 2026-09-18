@@ -19,8 +19,12 @@ final class UpdateChecker {
     private(set) var latestCommitTitle: String?
 
     private var checking = false
-    /// 이 간격 안에 이미 확인했으면 다시 묻지 않는다
-    private let interval: TimeInterval = 3 * 60 * 60
+    /// 메뉴를 열 때 다시 묻기까지의 최소 간격.
+    ///
+    /// 짧게 잡아야 한다. 길게 잡으면 새 버전이 올라와도 한참 동안 메뉴에 나타나지
+    /// 않는다. (3시간으로 두었더니 업데이트 항목이 계속 보이지 않았다)
+    /// 확인은 가벼운 요청 하나이고, GitHub은 시간당 60번까지 허용한다.
+    private let interval: TimeInterval = 60
 
     /// 지금 실행 중인 앱이 만들어진 시각
     static var builtAt: Date? {

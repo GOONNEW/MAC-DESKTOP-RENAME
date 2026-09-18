@@ -16,6 +16,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onCheckForUpdates: (Bool) -> Void
     /// 새 버전이 있는지 (있을 때만 업데이트 항목을 보여준다)
     private let updateAvailable: () -> Bool
+    /// 마지막 확인 결과 (고급 메뉴에 그대로 보여준다)
+    private let updateNote: () -> String
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
@@ -28,7 +30,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
          onDiagnose: @escaping () -> Void,
          onRelearnGestures: @escaping () -> Void,
          onCheckForUpdates: @escaping (Bool) -> Void,
-         updateAvailable: @escaping () -> Bool) {
+         updateAvailable: @escaping () -> Bool,
+         updateNote: @escaping () -> String) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
@@ -41,6 +44,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onRelearnGestures = onRelearnGestures
         self.onCheckForUpdates = onCheckForUpdates
         self.updateAvailable = updateAvailable
+        self.updateNote = updateNote
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -217,6 +221,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let resetTrust = NSMenuItem(title: "접근성 권한 초기화 후 다시 요청", action: #selector(resetTrust(_:)), keyEquivalent: "")
         resetTrust.target = self
         advancedMenu.addItem(resetTrust)
+
+        // 확인 결과를 그대로 보여준다. 안 보이면 "최신 버전"인지 "확인 실패"인지 알 수 없다.
+        let updateState = NSMenuItem(title: updateNote(), action: nil, keyEquivalent: "")
+        updateState.isEnabled = false
+        advancedMenu.addItem(updateState)
 
         let checkUpdate = NSMenuItem(title: "업데이트 확인…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         checkUpdate.target = self
