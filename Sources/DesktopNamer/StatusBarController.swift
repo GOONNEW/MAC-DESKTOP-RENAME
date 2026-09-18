@@ -13,6 +13,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let onUpdate: () -> Void
     private let onDiagnose: () -> Void
     private let onRelearnGestures: () -> Void
+    private let onCheckForUpdates: (Bool) -> Void
+    /// 새 버전이 있는지 (있을 때만 업데이트 항목을 보여준다)
+    private let updateAvailable: () -> Bool
 
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
@@ -23,7 +26,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
          onSyncBadges: @escaping () -> Void, onPreviewBadges: @escaping () -> Void,
          onUpdate: @escaping () -> Void,
          onDiagnose: @escaping () -> Void,
-         onRelearnGestures: @escaping () -> Void) {
+         onRelearnGestures: @escaping () -> Void,
+         onCheckForUpdates: @escaping (Bool) -> Void,
+         updateAvailable: @escaping () -> Bool) {
         self.spaces = spaces
         self.names = names
         self.settings = settings
@@ -34,6 +39,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.onUpdate = onUpdate
         self.onDiagnose = onDiagnose
         self.onRelearnGestures = onRelearnGestures
+        self.onCheckForUpdates = onCheckForUpdates
+        self.updateAvailable = updateAvailable
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -64,6 +71,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // 오래됐으면 조용히 다시 확인한다 (결과는 다음에 메뉴를 열 때 반영된다)
+        onCheckForUpdates(false)
         menu.removeAllItems()
 
         let header = NSMenuItem(title: "데스크탑", action: nil, keyEquivalent: "")
@@ -188,9 +197,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         login.state = settings.launchAtLogin ? .on : .off
         menu.addItem(login)
 
-        let update = NSMenuItem(title: "최신 버전으로 업데이트…", action: #selector(update(_:)), keyEquivalent: "")
-        update.target = self
-        menu.addItem(update)
+        // 새 버전이 있을 때만 보여준다. 눈에 띄도록 직접 그린다.
+        if updateAvailable() {
+            let text = "최신 버전으로 업데이트하세요"
+            let updateItem = NSMenuItem(title: text, action: #selector(update(_:)), keyEquivalent: "")
+            updateItem.target = self
+            updateItem.view = ShinyMenuItemView(title: text)
+            menu.addItem(updateItem)
+        }
 
         let advanced = NSMenuItem(title: "고급", action: nil, keyEquivalent: "")
         let advancedMenu = NSMenu()
@@ -203,6 +217,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let resetTrust = NSMenuItem(title: "접근성 권한 초기화 후 다시 요청", action: #selector(resetTrust(_:)), keyEquivalent: "")
         resetTrust.target = self
         advancedMenu.addItem(resetTrust)
+
+        let checkUpdate = NSMenuItem(title: "업데이트 확인…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        checkUpdate.target = self
+        advancedMenu.addItem(checkUpdate)
 
         let diagnose = NSMenuItem(title: "문제 진단…", action: #selector(diagnose(_:)), keyEquivalent: "")
         diagnose.target = self
@@ -293,6 +311,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func update(_ sender: Any?) {
         onUpdate()
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        onCheckForUpdates(true)
     }
 
     @objc private func previewBadges(_ sender: Any?) {
