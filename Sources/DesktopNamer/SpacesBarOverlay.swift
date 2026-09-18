@@ -41,6 +41,8 @@ final class SpacesBarOverlay {
     /// Mission Control이 열려 있는 동안 자주 불러 위치를 맞춘다.
     func update() {
         guard running else { return }
+        // 빠른 확인부터. 닫혀 있고 지금 그린 것도 없으면 트리 전체를 훑지 않는다.
+        if SpacesBarAX.isOpen() == false, !isShowing { return }
         let scan = SpacesBarAX.scan()
         lastNote = "\(scan.source): \(scan.note)"
         guard !scan.buttons.isEmpty else {

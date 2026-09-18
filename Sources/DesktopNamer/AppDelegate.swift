@@ -38,7 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 지난번에 덧그리기가 동작했다면 이번에도 배지는 만들지 않는다.
         // 배지를 준비하려면 데스크탑을 한 바퀴 돌아야 해서 화면이 어지럽게 바뀐다.
         badges?.suppressed = settings.spacesBarOverlayWorks
-        signals.isShowing = { [weak self] in self?.badges?.isVisible ?? false }
+        // "지금 이름이 보이는 중인가"는 둘 중 하나라도 보이면 참이다.
+        // 배지만 보면, 배지를 끈 뒤에는 늘 거짓이 되어 닫힘 판단과 위치 갱신이 통째로 멈춘다.
+        signals.isShowing = { [weak self] in
+            guard let self else { return false }
+            return self.badges?.isVisible == true || self.barOverlay?.isShowing == true
+        }
         signals.onOpenLikely = { [weak self] reason in
             self?.badges?.show(reason: reason)
             // 공간 막대가 그려질 시간을 조금 준 뒤 그 위에 이름을 덧그린다

@@ -163,6 +163,10 @@ final class MissionControlSignals {
 
     private func poll() {
         ticks += 1
+        // 공간 막대 위 이름표는 제스처 판단과 상관없이 항상 맞춘다.
+        // 열려 있으면 그리고, 닫혔으면 스스로 지운다. 추측에 기대지 않는 유일한 경로다.
+        onTick?()
+
         let showing = isShowing?() == true
         guard showing else {
             closedPolls = 0
@@ -171,9 +175,8 @@ final class MissionControlSignals {
             if probe.usesMetrics, ticks % 5 == 0, Date().timeIntervalSince(lastClosedAt) > 1.5 {
                 probe.noteQuiet()
             }
-            // 차이가 뚜렷하게 배워진 경우에만, 제스처를 놓쳤어도 열린 것을 알아챈다
+            // 제스처를 놓쳤어도 열린 것을 알아챈다
             // (Mission Control 키, 핫코너, Dock 아이콘으로 연 경우)
-            // 접근성 트리로 확인되면 제스처를 놓쳤어도 바로 알아챈다
             let confirmed = SpacesBarAX.isOpen() == true || probe.looksActiveStrict() == true
             if confirmed, Date().timeIntervalSince(lastAutoOpenAt) > 2 {
                 lastAutoOpenAt = Date()
@@ -187,7 +190,6 @@ final class MissionControlSignals {
             closedPolls = 0
             // 아직 열려 있다. 자동 숨김 타이머를 미뤄 이름이 먼저 사라지지 않게 한다.
             onStillOpen?()
-            onTick?()
         case .some(false):
             closedPolls += 1
             if closedPolls >= 3 { close("Mission Control 닫힘 확인", strong: true) }
