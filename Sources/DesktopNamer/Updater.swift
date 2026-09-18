@@ -150,15 +150,33 @@ final class Updater {
         """
         run(script: script) { [weak self] code in
             guard let self else { return }
-            guard code == 0 else {
+            // 종료 코드만 믿지 않는다.
+            // 빌드가 끝난 뒤 스크립트의 정리 단계에서 넘어져도 종료 코드가 0이 아니게 되는데,
+            // 그때 실패로 처리하면 멀쩡히 만들어진 새 앱을 버리고 재시작하지 않는다.
+            // 그래서 결과물이 방금 만들어졌는지를 직접 확인한다.
+            let built = Updater.freshlyBuiltApp(in: directory)
+            guard code == 0 || built != nil else {
                 self.window.finish(success: false, message: "빌드에 실패했습니다. 아래 내용을 복사해서 알려주세요.") {}
                 return
             }
             self.window.setProgress(1, status: "새 버전이 준비되었습니다.")
+            if code != 0 {
+                self.window.appendLog("\n빌드는 끝났지만 스크립트가 \(code)번 오류로 끝났습니다. 새 앱이 만들어졌으므로 그대로 적용합니다.\n")
+            }
             self.window.finish(success: true, message: "앱을 다시 시작하면 새 버전이 적용됩니다.") {
                 Updater.relaunchFromProject(directory: directory)
             }
         }
+    }
+
+    /// 방금(5분 안에) 새로 만들어진 앱이 있으면 그 경로를 돌려준다.
+    private static func freshlyBuiltApp(in directory: URL) -> URL? {
+        let app = directory.appendingPathComponent("build/DesktopNamer.app")
+        let binary = app.appendingPathComponent("Contents/MacOS/DesktopNamer")
+        guard let values = try? binary.resourceValues(forKeys: [.contentModificationDateKey]),
+              let builtAt = values.contentModificationDate,
+              Date().timeIntervalSince(builtAt) < 300 else { return nil }
+        return app
     }
 
     private static func relaunchFromProject(directory: URL) {
