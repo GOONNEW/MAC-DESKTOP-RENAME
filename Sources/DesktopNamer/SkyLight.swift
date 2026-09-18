@@ -11,8 +11,12 @@ enum SkyLight {
     private typealias CopyManagedDisplaySpacesFn = @convention(c) (CGSConnectionID) -> Unmanaged<CFArray>?
     private typealias GetActiveSpaceFn = @convention(c) (CGSConnectionID) -> CGSSpaceID
     private typealias CopySpacesForWindowsFn = @convention(c) (CGSConnectionID, UInt32, CFArray) -> Unmanaged<CFArray>?
-    private typealias NotifyProc = @convention(c) (UInt32, UnsafeMutableRawPointer?, Int, UnsafeMutableRawPointer?, Int32) -> Void
-    private typealias RegisterNotifyFn = @convention(c) (CGSConnectionID, NotifyProc, UInt32, UnsafeMutableRawPointer?) -> Int32
+    /// 연결(connection)마다 등록하는 알림 콜백. 마지막 인자로 연결 ID가 온다.
+    private typealias ConnectionNotifyProc = @convention(c) (UInt32, UnsafeMutableRawPointer?, Int, UnsafeMutableRawPointer?, Int32) -> Void
+    private typealias RegisterConnectionNotifyFn = @convention(c) (CGSConnectionID, ConnectionNotifyProc, UInt32, UnsafeMutableRawPointer?) -> Int32
+    /// 프로세스 전체에 등록하는 알림 콜백 (연결 ID 없음)
+    private typealias GlobalNotifyProc = @convention(c) (UInt32, UnsafeMutableRawPointer?, UInt32, UnsafeMutableRawPointer?) -> Void
+    private typealias RegisterGlobalNotifyFn = @convention(c) (GlobalNotifyProc, UInt32, UnsafeMutableRawPointer?) -> Int32
 
     /// kCGSAllSpacesMask: 현재 + 다른 + 사용자 공간 모두
     private static let allSpacesMask: UInt32 = 7
@@ -30,8 +34,10 @@ enum SkyLight {
     private static let copyManagedDisplaySpaces = symbol("CGSCopyManagedDisplaySpaces", as: CopyManagedDisplaySpacesFn.self)
     private static let getActiveSpace = symbol("CGSGetActiveSpace", as: GetActiveSpaceFn.self)
     private static let copySpacesForWindows = symbol("CGSCopySpacesForWindows", as: CopySpacesForWindowsFn.self)
-    private static let registerNotifyProc = symbol("SLSRegisterConnectionNotifyProc", as: RegisterNotifyFn.self)
-        ?? symbol("CGSRegisterConnectionNotifyProc", as: RegisterNotifyFn.self)
+    private static let registerConnectionNotify = symbol("SLSRegisterConnectionNotifyProc", as: RegisterConnectionNotifyFn.self)
+        ?? symbol("CGSRegisterConnectionNotifyProc", as: RegisterConnectionNotifyFn.self)
+    private static let registerGlobalNotify = symbol("SLSRegisterNotifyProc", as: RegisterGlobalNotifyFn.self)
+        ?? symbol("CGSRegisterNotifyProc", as: RegisterGlobalNotifyFn.self)
 
     static var isAvailable: Bool {
         mainConnection != nil && copyManagedDisplaySpaces != nil && getActiveSpace != nil
@@ -61,17 +67,38 @@ enum SkyLight {
     /// 메인 스레드에서 호출된다.
     static var onMissionControlEvent: ((UInt32) -> Void)?
 
-    private static let notifyProc: NotifyProc = { type, _, _, _, _ in
+    private static let connectionNotifyProc: ConnectionNotifyProc = { type, _, _, _, _ in
+        DispatchQueue.main.async { SkyLight.onMissionControlEvent?(type) }
+    }
+
+    private static let globalNotifyProc: GlobalNotifyProc = { type, _, _, _ in
         DispatchQueue.main.async { SkyLight.onMissionControlEvent?(type) }
     }
 
     /// Mission Control 열림/닫힘 알림을 등록한다. 결과 문자열은 진단용.
+    ///
+    /// 등록 방식이 두 가지다. 연결마다 등록하는 것과 프로세스 전체에 등록하는 것.
+    /// macOS 버전에 따라 한쪽만 실제로 알림을 보내 주므로 둘 다 등록한다.
+    /// (연결 방식만 썼을 때 등록은 성공(0)했는데 알림이 한 번도 오지 않았다)
+    /// 둘 다 오더라도 같은 값을 두 번 처리할 뿐이라 문제되지 않는다.
     static func registerMissionControlNotifications() -> String {
-        guard let cid = connection else { return "연결 없음" }
-        guard let fn = registerNotifyProc else { return "SLSRegisterConnectionNotifyProc 심볼 없음" }
-        return missionControlEvents
-            .map { "\($0)=\(fn(cid, notifyProc, $0, nil))" }
-            .joined(separator: ", ")
+        var notes: [String] = []
+
+        if let cid = connection, let fn = registerConnectionNotify {
+            let codes = missionControlEvents.map { "\($0)=\(fn(cid, connectionNotifyProc, $0, nil))" }
+            notes.append("연결별 " + codes.joined(separator: ","))
+        } else {
+            notes.append("연결별 등록 불가")
+        }
+
+        if let fn = registerGlobalNotify {
+            let codes = missionControlEvents.map { "\($0)=\(fn(globalNotifyProc, $0, nil))" }
+            notes.append("전체 " + codes.joined(separator: ","))
+        } else {
+            notes.append("전체 등록 불가 (심볼 없음)")
+        }
+
+        return notes.joined(separator: " / ")
     }
 
     private typealias SetCurrentSpaceFn = @convention(c) (CGSConnectionID, CFString, CGSSpaceID) -> Void

@@ -37,9 +37,14 @@ final class TrackpadMonitor {
     private static let scoreToConfirm = 20
 
     // 제스처 상태
-    private static var startY: Float?
-    private static var startCount = 0
+    /// 손가락 식별자 → 그 손가락이 제스처를 시작한 y 위치
+    private static var startPositions: [Int32: Float] = [:]
     private static var fired = false
+
+    private static func resetGesture() {
+        startPositions.removeAll()
+        fired = false
+    }
     /// 위로 쓸기로 인정할 최소 이동량 (0~1 정규화 좌표)
     private static let minimumRise: Float = 0.02
 
@@ -115,28 +120,32 @@ final class TrackpadMonitor {
         return sum / Float(count)
     }
 
-    /// 실제로 트랙패드에 "닿아 있는" 손가락들의 y 좌표만 골라낸다.
+    /// 실제로 트랙패드에 "닿아 있는" 손가락들을 (식별자, y 좌표)로 골라낸다.
     ///
     /// MultitouchSupport가 알려주는 손가락 개수에는 트랙패드 위에 살짝 떠 있거나
-    /// 방금 뗀 손가락도 들어간다. 그대로 세면 두 손가락으로 쓸었는데 3개로 잡혀
-    /// Mission Control 제스처로 오인한다.
+    /// 방금 뗀 손가락도 들어간다. 그대로 세면 두 손가락으로 쓸었는데 3개로 잡힌다.
     ///
     /// state 필드는 y 좌표보다 16바이트 앞에 있고, 값의 뜻은 다음과 같다.
     /// 1 추적 안 함, 2 범위 진입, 3 떠 있음, 4 닿기 시작, 5 닿아 있음,
     /// 6 떼는 중, 7 머무는 중, 8 범위 밖. 이 중 4와 5만 진짜로 누른 손가락이다.
-    private static func touchingYs(_ touches: UnsafeMutableRawPointer, count: Int, candidate: (stride: Int, yOffset: Int)) -> [Float] {
-        var states: [Int32] = []
-        var ys: [Float] = []
+    /// 식별자는 y 좌표보다 20바이트 앞에 있고, 손가락마다 다르며 떼기 전까지 유지된다.
+    private static func touchingFingers(_ touches: UnsafeMutableRawPointer, count: Int,
+                                        candidate: (stride: Int, yOffset: Int)) -> [(id: Int32, y: Float)] {
+        var all: [(id: Int32, state: Int32, y: Float)] = []
         for index in 0..<count {
             let base = index * candidate.stride
-            states.append(touches.load(fromByteOffset: base + candidate.yOffset - 16, as: Int32.self))
-            ys.append(touches.load(fromByteOffset: base + candidate.yOffset, as: Float.self))
+            all.append((
+                id: touches.load(fromByteOffset: base + candidate.yOffset - 20, as: Int32.self),
+                state: touches.load(fromByteOffset: base + candidate.yOffset - 16, as: Int32.self),
+                y: touches.load(fromByteOffset: base + candidate.yOffset, as: Float.self)
+            ))
         }
-        // 값이 예상 범위(1~8)를 벗어나면 그 자리가 state가 아니다. 그때는 전부 센다.
-        guard states.allSatisfy({ $0 >= 1 && $0 <= 8 }) else { return ys }
-        let touching = zip(states, ys).filter { $0.0 == 4 || $0.0 == 5 }.map { $0.1 }
-        // 하나도 안 걸리면 판단이 안 되는 상황이므로 원래대로 전부 센다
-        return touching.isEmpty ? ys : touching
+        // state 값이 예상 범위(1~8)를 벗어나면 그 자리가 state가 아니다. 그때는 전부 센다.
+        let statesLookValid = all.allSatisfy { $0.state >= 1 && $0.state <= 8 }
+        let touching = statesLookValid ? all.filter { $0.state == 4 || $0.state == 5 } : all
+        // 하나도 안 걸리면 판단이 안 되는 상황이므로 원래대로 전부 쓴다
+        let chosen = touching.isEmpty ? all : touching
+        return chosen.map { (id: $0.id, y: $0.y) }
     }
 
     private static let callback: ContactCallback = { _, touches, touchCount, _, _ in
@@ -144,9 +153,7 @@ final class TrackpadMonitor {
         lastCount = count
 
         guard count >= 1, count <= 11, let touches else {
-            startY = nil
-            startCount = 0
-            fired = false
+            resetGesture()
             return 0
         }
 
@@ -189,17 +196,15 @@ final class TrackpadMonitor {
         }
         guard let found = layout else { return 0 }
 
-        let ys = touchingYs(touches, count: count, candidate: found)
-        lastTouching = ys.count
-        guard ys.count >= 3 else {
-            startY = nil
-            startCount = 0
-            fired = false
+        let fingers = touchingFingers(touches, count: count, candidate: found)
+        lastTouching = fingers.count
+        guard fingers.count >= 3 else {
+            resetGesture()
             return 0
         }
 
-        let y = ys.reduce(0, +) / Float(ys.count)
-        guard y.isFinite, y >= -0.05, y <= 1.05 else {
+        let average = fingers.reduce(Float(0)) { $0 + $1.y } / Float(fingers.count)
+        guard average.isFinite, average >= -0.05, average <= 1.05 else {
             badReads += 1
             if badReads > 30 {
                 // 잘못 찾은 자리다. 처음부터 다시 탐색한다.
@@ -210,27 +215,42 @@ final class TrackpadMonitor {
             return 0
         }
         badReads = 0
-        lastY = y
+        lastY = average
 
-        if startY == nil || ys.count != startCount {
-            startY = y
-            startCount = ys.count
-            fired = false
-            return 0
+        // 손가락마다 "어디서 시작했는지"를 기억한다.
+        // 새로 닿은 손가락은 지금 자리를 시작점으로 삼고, 이미 재고 있던 손가락은 그대로 둔다.
+        // (세 손가락이 동시에 닿지 않아도 제스처를 놓치지 않는다)
+        var updated: [Int32: Float] = [:]
+        for finger in fingers {
+            updated[finger.id] = startPositions[finger.id] ?? finger.y
         }
-        guard !fired, let origin = startY else { return 0 }
+        startPositions = updated
 
-        let rise = y - origin
-        lastRise = rise
-        // 위아래로 충분히 움직였을 때만 알린다 (가만히 얹거나 좌우로 쓸면 반응하지 않음)
-        if abs(rise) >= minimumRise {
-            fired = true
-            swipeCount += 1
-            let fingers = ys.count
-            let up = rise > 0
-            DispatchQueue.main.async {
-                up ? onSwipeUp?(fingers) : onSwipeDown?(fingers)
-            }
+        // 평균이 아니라 손가락 하나하나가 같은 방향으로 충분히 움직였는지 본다.
+        //
+        // 평균만 보면, 두 손가락으로 스크롤하는 동안 엄지가 가만히 얹혀 있어도
+        // "세 손가락이 위로 움직였다"가 되어 버린다. 실제로 두 손가락 스크롤 때마다
+        // 이름표가 번쩍이는 문제가 있었다.
+        var risen = 0
+        var fallen = 0
+        var biggest: Float = 0
+        for finger in fingers {
+            guard let origin = startPositions[finger.id] else { continue }
+            let delta = finger.y - origin
+            if abs(delta) > abs(biggest) { biggest = delta }
+            if delta >= minimumRise { risen += 1 }
+            if delta <= -minimumRise { fallen += 1 }
+        }
+        lastRise = biggest
+
+        guard !fired else { return 0 }
+        guard risen >= 3 || fallen >= 3 else { return 0 }
+        fired = true
+        swipeCount += 1
+        let touchingCount = fingers.count
+        let up = risen >= 3
+        DispatchQueue.main.async {
+            up ? onSwipeUp?(touchingCount) : onSwipeDown?(touchingCount)
         }
         return 0
     }
@@ -269,8 +289,7 @@ final class TrackpadMonitor {
         guard let stop = Self.stop else { return }
         devices.forEach { stop($0) }
         devices.removeAll()
-        Self.startY = nil
-        Self.fired = false
+        Self.resetGesture()
         Self.layout = nil
         Self.candidateScores.removeAll()
         note = "정지"

@@ -37,6 +37,8 @@ final class MissionControlSignals {
     private var reopenBlockedUntil = Date.distantPast
     /// 열려 있다는 판단 때문에 약한 닫힘 신호를 무시한 횟수
     private var ignoredCloses = 0
+    /// 이름표를 띄운 시각
+    private var shownAt: Date?
     private(set) var isRunning = false
     private(set) var lastOpenNote = "없음"
 
@@ -189,6 +191,8 @@ final class MissionControlSignals {
             return
         }
         lastOpenNote = "\(reason) (\(formatter.string(from: Date())))"
+        shownAt = Date()
+        ignoredCloses = 0
         onOpenLikely?(reason)
 
         // 열린 직후의 화면 지표를 재서 배운다. 애니메이션이 시작될 시간을 준다.
@@ -216,18 +220,27 @@ final class MissionControlSignals {
         guard isShowing?() == true else { return }
 
         if !strong, probe.looksActive() == true {
+            // 열려 있는 동안 클릭·스크롤을 무시하는 것은 원래 의도한 동작이다.
+            // (미션 컨트롤을 구경하는 중에 이름표가 꺼지지 않게 하려는 것)
+            // 그러니 이것만으로 판단이 틀렸다고 보면 안 된다. 실제로 그렇게 했더니
+            // 멀쩡한 지표까지 줄줄이 버려졌다. 여기서는 세기만 하고, 너무 오래
+            // 이어질 때만 마지막 수단으로 끊는다.
             ignoredCloses += 1
-            // 평소 화면에서 클릭하고 입력하는데도 계속 "열려 있다"고 한다면 그 판단이 틀렸다.
-            // 그대로 두면 이름표가 화면에 남아 버리므로, 근거를 버리고 숨긴다.
-            guard ignoredCloses >= 3 else { return }
+            guard ignoredCloses >= 12, showingLongerThan(8) else { return }
             probe.distrust()
             ignoredCloses = 0
-            finishClose(reason + " (열림 판단이 틀림)", force: true, blockReopen: blockReopen)
+            finishClose(reason + " (열림 판단이 너무 오래 이어짐)", force: true, blockReopen: blockReopen)
             return
         }
 
         ignoredCloses = 0
         finishClose(reason, force: strong, blockReopen: blockReopen)
+    }
+
+    /// 이름표가 이 시간보다 오래 보이고 있는가
+    private func showingLongerThan(_ seconds: TimeInterval) -> Bool {
+        guard let shownAt else { return false }
+        return Date().timeIntervalSince(shownAt) > seconds
     }
 
     private func finishClose(_ reason: String, force: Bool, blockReopen: TimeInterval) {
@@ -236,6 +249,16 @@ final class MissionControlSignals {
         }
         lastClosedAt = Date()
         closedPolls = 0
+        shownAt = nil
         onCloseLikely?(reason, force)
+
+        // 확실하게 닫은 다음에도 지표가 "아직 열려 있다"고 하면, 그 지표가 틀린 것이다.
+        // 이건 진짜 모순이라 근거로 삼을 수 있다. 닫히는 애니메이션이 끝날 시간을 준 뒤 본다.
+        guard force else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, self.isShowing?() != true else { return }
+            guard self.probe.looksActive() == true else { return }
+            self.probe.distrust()
+        }
     }
 }
