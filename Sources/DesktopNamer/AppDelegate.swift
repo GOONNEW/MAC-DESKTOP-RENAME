@@ -28,6 +28,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore)
         badges = BadgeManager(spaces: spaceManager, names: nameStore)
         barOverlay = SpacesBarOverlay(spaces: spaceManager, names: nameStore)
+        // 공간 막대 위에 이름을 올릴 수 있으면, 데스크탑 안쪽에 두던 예전 배지는 끈다.
+        // 둘 다 켜져 있으면 미션 컨트롤에 같은 이름이 두 번 보인다.
+        barOverlay?.onPlaced = { [weak self] in
+            guard let self else { return }
+            self.badges?.suppressed = true
+            if !self.settings.spacesBarOverlayWorks { self.settings.spacesBarOverlayWorks = true }
+        }
+        // 지난번에 덧그리기가 동작했다면 이번에도 배지는 만들지 않는다.
+        // 배지를 준비하려면 데스크탑을 한 바퀴 돌아야 해서 화면이 어지럽게 바뀐다.
+        badges?.suppressed = settings.spacesBarOverlayWorks
         signals.isShowing = { [weak self] in self?.badges?.isVisible ?? false }
         signals.onOpenLikely = { [weak self] reason in
             self?.badges?.show(reason: reason)
@@ -78,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] uuids in self?.nameStore.prune(keeping: uuids) }
             .store(in: &cancellables)
 
-        badges?.autoPrepare = settings.badgeAutoPrepare
+        badges?.autoPrepare = settings.badgeAutoPrepare && !settings.spacesBarOverlayWorks
         settings.$badgeAutoPrepare
             .sink { [weak self] auto in self?.badges?.autoPrepare = auto }
             .store(in: &cancellables)

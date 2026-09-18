@@ -137,6 +137,15 @@ final class BadgeManager {
     /// 앱을 켤 때 배지를 자동으로 준비한다
     var autoPrepare = true
 
+    /// 공간 막대 위에 이름을 덧그리는 방식이 동작하면 이 배지는 필요 없다.
+    /// 둘 다 켜져 있으면 미션 컨트롤에 같은 이름이 두 번 보인다.
+    var suppressed = false {
+        didSet {
+            guard suppressed != oldValue, suppressed, isVisible else { return }
+            hide(reason: "공간 막대 덧그리기로 대체", force: true)
+        }
+    }
+
     func stop() {
         running = false
         cancellables.removeAll()
@@ -155,7 +164,7 @@ final class BadgeManager {
 
     /// Mission Control이 열릴 것 같을 때: 잠깐 뒤(애니메이션이 시작될 즈음) 배지를 보이게 한다.
     func show(reason: String) {
-        guard running, !isVisible else { return }
+        guard running, !isVisible, !suppressed else { return }
         hideTimer?.invalidate()
         // 지연 없이 즉시 띄운다. macOS는 Mission Control을 열 때 현재 데스크탑 화면을
         // 한 번 찍어 썸네일로 쓰는데, 그 순간보다 배지가 늦으면 썸네일에 찍히지 않는다.
@@ -587,7 +596,7 @@ final class BadgeManager {
 
     func diagnostics() -> String {
         var lines: [String] = []
-        lines.append("이름 배지: \(running ? "켜짐" : "꺼짐"), 지금 \(isVisible ? "보임" : "숨김"), 위치 \(corner.title), 크기 \(size.title), \(mainScreenOnly ? "주 화면만" : "모든 화면")")
+        lines.append("이름 배지: \(suppressed ? "꺼짐 (공간 막대 덧그리기로 대체)" : running ? "켜짐" : "꺼짐"), 지금 \(isVisible ? "보임" : "숨김"), 위치 \(corner.title), 크기 \(size.title), \(mainScreenOnly ? "주 화면만" : "모든 화면")")
         lines.append("화면 수: \(NSScreen.screens.count), 배지 창 수: \(badges.values.reduce(0) { $0 + $1.count }), 보조 화면 미러: \(mirrorToOtherScreens ? "켜짐 (\(mirrors.count)개)" : "꺼짐")")
         let missing = spaces.spaces.filter { !$0.isFullscreen && badges[$0.uuid] == nil }.map { $0.defaultName }
         lines.append("배지 없는 데스크탑: \(missing.isEmpty ? "없음" : missing.joined(separator: ", "))")

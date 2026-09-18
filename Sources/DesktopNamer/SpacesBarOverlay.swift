@@ -18,6 +18,11 @@ final class SpacesBarOverlay {
     private var running = false
     private(set) var lastNote = "시작 안 됨"
     private(set) var isShowing = false
+    /// 한 번이라도 이름표를 제대로 올린 적이 있는가.
+    /// 이게 true면 데스크탑 안쪽에 두는 예전 배지는 필요 없다.
+    private(set) var everWorked = false
+    /// 이름표를 올릴 때마다 호출된다 (예전 배지를 끄기 위함)
+    var onPlaced: (() -> Void)?
 
     init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
@@ -58,6 +63,8 @@ final class SpacesBarOverlay {
             panels[extra].alphaValue = 0
         }
         isShowing = true
+        everWorked = true
+        onPlaced?()
     }
 
     func hide() {
@@ -129,8 +136,25 @@ final class SpacesBarOverlay {
         return (panel, field)
     }
 
-    /// 썸네일 아래쪽 가운데에 이름표를 놓는다
-    private func place(panel: NSPanel, field: NSTextField, text: String, over thumbnail: CGRect) {
+    /// 공간 버튼 안에서 "썸네일 그림"이 차지하는 부분만 골라낸다.
+    ///
+    /// 접근성이 알려주는 버튼 영역에는 썸네일 그림뿐 아니라 그 아래의 "데스크탑 N" 글자와
+    /// 여백까지 들어 있다. 버튼 아래쪽에 맞춰 놓았더니 이름표가 공간 막대 바깥,
+    /// 화면 한가운데에 떠 버렸다.
+    /// 썸네일 그림은 화면과 같은 비율로 축소된 것이므로, 너비에 화면 비율을 곱하면 높이가 나온다.
+    /// 비율 추정이 빗나가도 버튼 밖으로 나가지 않도록 위아래로 묶어 둔다.
+    private func thumbnailRect(in button: CGRect) -> CGRect {
+        let screen = NSScreen.screens.first(where: { $0.frame.intersects(button) })
+            ?? NSScreen.screens.first
+        let ratio = screen.map { $0.frame.height / $0.frame.width } ?? 0.625
+        let estimated = button.width * ratio
+        let height = min(max(estimated, button.height * 0.4), button.height * 0.85)
+        return CGRect(x: button.minX, y: button.maxY - height, width: button.width, height: height)
+    }
+
+    /// 썸네일 그림의 아래쪽 가운데에 이름표를 놓는다
+    private func place(panel: NSPanel, field: NSTextField, text: String, over button: CGRect) {
+        let thumbnail = thumbnailRect(in: button)
         // 썸네일 높이에 맞춰 글자 크기를 정한다 (썸네일이 작으므로 작게)
         var pointSize = max(10, min(16, (thumbnail.height * 0.26).rounded()))
         let maxWidth = thumbnail.width * 0.96
@@ -158,6 +182,7 @@ final class SpacesBarOverlay {
     }
 
     var diagnostics: String {
-        "공간 막대 덧그리기: \(running ? (isShowing ? "표시 중" : "대기") : "꺼짐") / \(lastNote)"
+        "공간 막대 덧그리기: \(running ? (isShowing ? "표시 중" : "대기") : "꺼짐")"
+            + "\(everWorked ? " (성공한 적 있음 → 예전 배지는 끔)" : "")  / \(lastNote)"
     }
 }
