@@ -15,6 +15,11 @@ final class SpacesBarOverlay {
 
     private var panels: [NSPanel] = []
     private var fields: [NSTextField] = []
+    /// 썸네일 안에서 이름표를 놓을 구석
+    var corner: BadgeManager.Corner = .bottomRight
+    /// 글자 크기
+    var size: BadgeManager.Size = .large
+
     private var running = false
     private(set) var lastNote = "시작 안 됨"
     private(set) var isShowing = false
@@ -23,6 +28,12 @@ final class SpacesBarOverlay {
     private(set) var everWorked = false
     /// 이름표를 올릴 때마다 호출된다 (예전 배지를 끄기 위함)
     var onPlaced: (() -> Void)?
+    /// 더 이상 올릴 수 없게 되었을 때 한 번 호출된다 (예전 배지로 되돌리기 위함)
+    var onFellBack: (() -> Void)?
+
+    /// 열린 것 같은데 이름표를 올리지 못한 횟수
+    private var misses = 0
+    private var fellBack = false
 
     init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
@@ -41,14 +52,24 @@ final class SpacesBarOverlay {
     /// Mission Control이 열려 있는 동안 자주 불러 위치를 맞춘다.
     func update() {
         guard running else { return }
+        let open = SpacesBarAX.isOpen()
+        // 접근성 권한이 없어지면(nil) 더 읽을 수 없다. 예전 방식으로 돌아간다.
+        if open == nil, everWorked { fallBack(reason: "접근성 권한을 읽을 수 없음"); return }
         // 빠른 확인부터. 닫혀 있고 지금 그린 것도 없으면 트리 전체를 훑지 않는다.
-        if SpacesBarAX.isOpen() == false, !isShowing { return }
+        if open == false, !isShowing { return }
         let scan = SpacesBarAX.scan()
         lastNote = "\(scan.source): \(scan.note)"
         guard !scan.buttons.isEmpty else {
+            // 열려 있다는데 공간 막대를 못 찾으면 구조가 바뀐 것이다.
+            // 몇 번 이어지면 예전 방식으로 돌아간다.
+            if open == true, everWorked {
+                misses += 1
+                if misses >= 8 { fallBack(reason: "공간 막대를 더 이상 찾지 못함") }
+            }
             hide()
             return
         }
+        misses = 0
 
         // 공간 막대의 버튼은 왼쪽부터 차례대로다. 이름을 붙일 것만 골라 짝지운다.
         let labels = matchNames(to: scan.buttons)
@@ -67,6 +88,15 @@ final class SpacesBarOverlay {
         isShowing = true
         everWorked = true
         onPlaced?()
+    }
+
+    /// 더 이상 쓸 수 없으니 예전 배지 방식으로 돌아간다
+    private func fallBack(reason: String) {
+        guard !fellBack else { return }
+        fellBack = true
+        lastNote = "되돌림: \(reason)"
+        hide()
+        onFellBack?()
     }
 
     func hide() {
@@ -157,8 +187,10 @@ final class SpacesBarOverlay {
     /// 썸네일 그림의 아래쪽 가운데에 이름표를 놓는다
     private func place(panel: NSPanel, field: NSTextField, text: String, over button: CGRect) {
         let thumbnail = thumbnailRect(in: button)
-        // 썸네일 높이에 맞춰 글자 크기를 정한다 (썸네일이 작으므로 작게)
-        var pointSize = max(10, min(16, (thumbnail.height * 0.26).rounded()))
+        // 썸네일 높이에 맞춰 글자 크기를 정한다. 썸네일이 작으므로 위아래로 묶어 둔다.
+        // 설정의 크기 비율을 그대로 쓰면 썸네일에서는 너무 커서, 비율만 가져와 줄인다.
+        let ratio = size.ratio * 1.4
+        var pointSize = max(9, min(20, (thumbnail.height * ratio).rounded()))
         let maxWidth = thumbnail.width * 0.96
         while pointSize > 8 {
             field.font = .systemFont(ofSize: pointSize, weight: .bold)
@@ -177,7 +209,16 @@ final class SpacesBarOverlay {
         field.frame = CGRect(x: 6, y: 3, width: width - 12, height: field.frame.height)
         panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
 
-        let origin = CGPoint(x: thumbnail.midX - width / 2, y: thumbnail.minY + 3)
+        let margin: CGFloat = 4
+        let x: CGFloat
+        let y: CGFloat
+        switch corner {
+        case .bottomRight: x = thumbnail.maxX - width - margin; y = thumbnail.minY + margin
+        case .bottomLeft:  x = thumbnail.minX + margin;         y = thumbnail.minY + margin
+        case .topRight:    x = thumbnail.maxX - width - margin; y = thumbnail.maxY - height - margin
+        case .topLeft:     x = thumbnail.minX + margin;         y = thumbnail.maxY - height - margin
+        }
+        let origin = CGPoint(x: x, y: y)
         panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
         panel.alphaValue = 1
         panel.orderFrontRegardless()

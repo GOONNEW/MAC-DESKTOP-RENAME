@@ -135,11 +135,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let displayMenu = NSMenu()
         displayMenu.autoenablesItems = false
 
-        let sync = NSMenuItem(title: "데스크탑 이름 동기화…", action: #selector(syncBadges(_:)), keyEquivalent: "")
-        sync.target = self
-        displayMenu.addItem(sync)
-
-        displayMenu.addItem(.separator())
+        // 미션 컨트롤 위에 직접 그릴 수 있으면 준비할 것이 없다. 눌러도 하는 일이 없는
+        // 항목은 두지 않는다. 그 방식이 안 되는 맥에서만 보인다.
+        if !settings.spacesBarOverlayWorks {
+            let sync = NSMenuItem(title: "데스크탑 이름 동기화…", action: #selector(syncBadges(_:)), keyEquivalent: "")
+            sync.target = self
+            displayMenu.addItem(sync)
+            displayMenu.addItem(.separator())
+        }
 
         let cornerItem = NSMenuItem(title: "위치", action: nil, keyEquivalent: "")
         let cornerMenu = NSMenu()
@@ -167,7 +170,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         sizeItem.submenu = sizeMenu
         displayMenu.addItem(sizeItem)
 
-        if NSScreen.screens.count > 1 {
+        // 아래 항목들은 데스크탑 안쪽에 이름표 창을 두는 예전 방식에만 해당한다.
+        // 미션 컨트롤 위에 직접 그리는 맥에서는 뜻이 없으므로 보이지 않는다.
+        let usesBadges = !settings.spacesBarOverlayWorks
+
+        if usesBadges, NSScreen.screens.count > 1 {
             let mainOnly = NSMenuItem(title: "주 화면에만 표시", action: #selector(toggleMainScreenOnly(_:)), keyEquivalent: "")
             mainOnly.target = self
             mainOnly.state = settings.badgeMainScreenOnly ? .on : .off
@@ -180,16 +187,18 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             displayMenu.addItem(mirror)
         }
 
-        displayMenu.addItem(.separator())
+        if usesBadges {
+            displayMenu.addItem(.separator())
 
-        let preview = NSMenuItem(title: "지금 이름 보기 (5초)", action: #selector(previewBadges(_:)), keyEquivalent: "")
-        preview.target = self
-        displayMenu.addItem(preview)
+            let preview = NSMenuItem(title: "지금 이름 보기 (5초)", action: #selector(previewBadges(_:)), keyEquivalent: "")
+            preview.target = self
+            displayMenu.addItem(preview)
 
-        let auto = NSMenuItem(title: "앱 시작 시 자동 준비", action: #selector(toggleAutoPrepare(_:)), keyEquivalent: "")
-        auto.target = self
-        auto.state = settings.badgeAutoPrepare ? .on : .off
-        displayMenu.addItem(auto)
+            let auto = NSMenuItem(title: "앱 시작 시 자동 준비", action: #selector(toggleAutoPrepare(_:)), keyEquivalent: "")
+            auto.target = self
+            auto.state = settings.badgeAutoPrepare ? .on : .off
+            displayMenu.addItem(auto)
+        }
 
         display.submenu = displayMenu
         menu.addItem(display)

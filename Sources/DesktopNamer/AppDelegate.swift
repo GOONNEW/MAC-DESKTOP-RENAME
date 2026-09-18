@@ -35,6 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.badges?.suppressed = true
             if !self.settings.spacesBarOverlayWorks { self.settings.spacesBarOverlayWorks = true }
         }
+        barOverlay?.onFellBack = { [weak self] in
+            guard let self else { return }
+            self.badges?.suppressed = false
+            self.settings.spacesBarOverlayWorks = false
+        }
         // 지난번에 덧그리기가 동작했다면 이번에도 배지는 만들지 않는다.
         // 배지를 준비하려면 데스크탑을 한 바퀴 돌아야 해서 화면이 어지럽게 바뀐다.
         badges?.suppressed = settings.spacesBarOverlayWorks
@@ -107,11 +112,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         settings.$badgeCorner
-            .sink { [weak self] corner in self?.badges?.corner = corner }
+            .sink { [weak self] corner in
+                self?.badges?.corner = corner
+                self?.barOverlay?.corner = corner
+            }
             .store(in: &cancellables)
 
         settings.$badgeSize
-            .sink { [weak self] size in self?.badges?.size = size }
+            .sink { [weak self] size in
+                self?.badges?.size = size
+                self?.barOverlay?.size = size
+            }
             .store(in: &cancellables)
 
         settings.$badgeMainScreenOnly
