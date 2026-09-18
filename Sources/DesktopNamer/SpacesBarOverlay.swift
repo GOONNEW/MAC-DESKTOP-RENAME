@@ -185,8 +185,12 @@ final class SpacesBarOverlay {
         let screen = NSScreen.screens.first(where: { $0.frame.intersects(button) })
             ?? NSScreen.screens.first
         let ratio = screen.map { $0.frame.height / $0.frame.width } ?? 0.625
-        let estimated = button.width * ratio
-        let height = min(max(estimated, button.height * 0.5), button.height)
+        // 버튼 너비에는 좌우 여백이 들어 있어, 그대로 비율을 곱하면 그림 높이가 과하게 나온다.
+        // 실측: 버튼 169×129에서 계산값은 109였지만 실제 그림은 약 81이었고, 이름표가
+        // 그림 아래 글자 자리로 내려갔다. 버튼 높이의 65%를 넘지 않게 묶는다.
+        // (129의 65% = 84로 실제와 맞는다. 아래 남는 부분이 "데스크탑 N" 글자 자리다)
+        let estimated = min(button.width * ratio, button.height * 0.65)
+        let height = min(max(estimated, button.height * 0.4), button.height)
         return CGRect(x: button.minX, y: button.maxY - height, width: button.width, height: height)
     }
 

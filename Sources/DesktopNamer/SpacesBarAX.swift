@@ -113,30 +113,36 @@ enum SpacesBarAX {
                 notes.append("\(host.name)에 mc 그룹 없음")
                 continue
             }
-            // 목록(= 디스플레이)별로 모은 뒤 크기를 바로잡는다
-            var perList: [[(label: String, raw: CGRect)]] = []
+            // 목록(= 디스플레이)별로 모은다
+            var perList: [[(label: String, raw: CGRect, element: AXUIElement)]] = []
             for group in groups {
                 guard let list = findDescendant(of: group, identifier: "mc.spaces.list", maxDepth: 6)
                     ?? findDescendant(of: group, identifier: "mc.spaces", maxDepth: 6) else { continue }
-                var items: [(label: String, raw: CGRect)] = []
+                var items: [(label: String, raw: CGRect, element: AXUIElement)] = []
                 for item in listItems(of: list) {
                     guard let raw = rawFrame(of: item) else { continue }
                     let label = (attribute(item, kAXDescriptionAttribute) as? String)
                         ?? (attribute(item, kAXTitleAttribute) as? String)
                         ?? ""
-                    items.append((label, raw))
+                    items.append((label, raw, item))
                 }
                 if !items.isEmpty { perList.append(items) }
             }
 
-            let scales = perList.map { sizeScale(for: $0.map(\.raw)) }
-            // 버튼이 한두 개뿐인 목록은 배율을 알 수 없다. 다른 목록에서 알아낸 값을 빌린다.
-            let known = scales.filter { $0 != 1 }
-            let fallback: CGFloat = known.isEmpty ? 1 : known[known.count / 2]
+            // 미션 컨트롤이 열리고 닫히는 동안에는 공간 막대가 가운데에서 펼쳐진다.
+            // 그 중간 모습은 버튼 간격이 실제의 절반이라, 크기 배율을 잘못 알아내게 만든다.
+            // (간격 85에 너비 169 → 두 배로 오판. 다 펼쳐지면 간격 171, 너비 169로 딱 맞는다)
+            // 그래서 두 번 연속 같은 자리에 있을 때(= 움직임이 멈췄을 때)만 배율을 배운다.
+            let signature = perList.flatMap { $0 }
+                .map { "\(Int($0.raw.minX)),\(Int($0.raw.minY)),\(Int($0.raw.width))" }
+                .joined(separator: "|")
+            let stable = !signature.isEmpty && signature == previousSignature
+            previousSignature = signature
+
+            let scale = sizeScale(for: perList.flatMap { $0.map(\.raw) }, stable: stable)
 
             var buttons: [SpaceButton] = []
-            for (index, items) in perList.enumerated() {
-                let scale = items.count >= 3 ? scales[index] : (scales[index] == 1 ? fallback : scales[index])
+            for items in perList {
                 for item in items {
                     let corrected = CGRect(x: item.raw.minX, y: item.raw.minY,
                                            width: item.raw.width * scale, height: item.raw.height * scale)
@@ -147,7 +153,8 @@ enum SpacesBarAX {
             }
             if !buttons.isEmpty {
                 lastGoodHost = host.bundleID
-                rememberWhileOpen(host: host.name, groups: groups, buttons: buttons)
+                rememberWhileOpen(host: host.name, groups: groups, buttons: buttons,
+                                  sample: perList.first?.first?.element, stable: stable)
                 return Scan(buttons: buttons, source: host.name, note: "공간 버튼 \(buttons.count)개")
             }
             notes.append("\(host.name)의 mc 그룹에서 공간 버튼을 찾지 못함")
@@ -164,14 +171,12 @@ enum SpacesBarAX {
     ///
     /// 그래서 숫자를 미리 정하지 않고, 버튼들이 늘어선 간격과 너비를 비교해 알아낸다.
     /// 나란히 놓인 썸네일의 너비는 간격보다 클 수 없다.
-    private static func sizeScale(for frames: [CGRect]) -> CGFloat {
-        if let detected = detectScale(for: frames) {
+    private static func sizeScale(for frames: [CGRect], stable: Bool) -> CGFloat {
+        if stable, let detected = detectScale(for: frames) {
             learnedScale = detected
             return detected
         }
-        // 미션 컨트롤이 열리고 닫히는 동안에는 버튼이 한두 개만 보이는 순간이 있다.
-        // 그때마다 배율이 1로 되돌아가면 이름표가 엉뚱한 자리로 튄다. 배율은 화면의 성질이지
-        // 순간의 성질이 아니므로, 한 번 알아낸 값을 계속 쓴다.
+        // 아직 움직이는 중이면 새로 재지 않고, 지난번에 안정된 상태에서 알아낸 값을 쓴다.
         return learnedScale ?? 1
     }
 
@@ -226,16 +231,12 @@ enum SpacesBarAX {
 
     private static var previousSignature = ""
 
-    private static func rememberWhileOpen(host: String, groups: [AXUIElement], buttons: [SpaceButton]) {
-        // 미션 컨트롤이 열리고 닫히는 동안의 중간 모습을 기억하면 값이 실제와 다르다.
-        // 두 번 연속 똑같이 보일 때만(= 움직임이 멈췄을 때) 기억한다.
-        let signature = buttons.map { "\(Int($0.frame.minX)),\(Int($0.frame.minY)),\(Int($0.frame.width))" }
-            .joined(separator: "|")
-        defer { previousSignature = signature }
-        guard signature == previousSignature else { return }
+    private static func rememberWhileOpen(host: String, groups: [AXUIElement], buttons: [SpaceButton],
+                                          sample: AXUIElement?, stable: Bool) {
+        guard stable else { return }
         guard lastOpenSnapshot == nil || buttons.count != lastOpenButtonCount else { return }
         lastOpenButtonCount = buttons.count
-        var lines: [String] = ["\(host)에서 읽음, 공간 버튼 \(buttons.count)개"]
+        var lines: [String] = ["\(host)에서 읽음, 공간 버튼 \(buttons.count)개 (움직임이 멈춘 상태)"]
         for button in buttons {
             let f = button.frame
             let r = button.rawFrame
@@ -244,11 +245,33 @@ enum SpacesBarAX {
                 + " ×\(String(format: "%.2f", button.scale))"
                 + " → (\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
         }
+        // 버튼 하나의 속성과 자식을 전부 찍는다.
+        // 버튼 영역에는 썸네일 그림과 아래 글자, 여백이 함께 들어 있어 그림의 정확한 자리를
+        // 알 수 없다. 자식 요소나 다른 속성에 그림만의 자리가 들어 있는지 확인하기 위함이다.
+        if let sample {
+            var namesRef: CFArray?
+            let names = AXUIElementCopyAttributeNames(sample, &namesRef) == .success
+                ? (namesRef as? [String] ?? []) : []
+            lines.append("버튼 속성: " + names.joined(separator: ", "))
+            for key in ["AXFrame", "AXVisibleArea", "AXSelectedArea"] where names.contains(key) {
+                if let value = attribute(sample, key), CFGetTypeID(value) == AXValueGetTypeID() {
+                    var rect = CGRect.zero
+                    if AXValueGetValue(value as! AXValue, .cgRect, &rect) {
+                        lines.append("  \(key) = (\(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))×\(Int(rect.height)))")
+                    }
+                }
+            }
+            let kids = attribute(sample, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            lines.append("버튼 자식 \(kids.count)개")
+            for kid in kids.prefix(6) {
+                dump(kid, depth: 1, maxDepth: 2, limit: 60, into: &lines)
+            }
+        }
         lines.append("트리:")
         for group in groups {
-            dump(group, depth: 1, maxDepth: 5, limit: 60, into: &lines)
+            dump(group, depth: 1, maxDepth: 5, limit: 70, into: &lines)
         }
-        lastOpenSnapshot = lines.prefix(60).joined(separator: "\n")
+        lastOpenSnapshot = lines.prefix(70).joined(separator: "\n")
     }
 
     /// 두 프로세스의 트리를 지금 그대로 찍어 준다. 구조가 또 바뀌면 이걸 보고 맞춘다.
