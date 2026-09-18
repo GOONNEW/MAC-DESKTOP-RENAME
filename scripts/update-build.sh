@@ -12,6 +12,21 @@ set -euo pipefail
 #    실행하므로, 마지막 줄에서 main을 부를 때는 이미 파일을 다 읽은 상태다.
 # 2. 복사를 rsync로 한다. rsync는 임시 파일에 쓴 뒤 이름만 바꿔치기하므로
 #    실행 중인 파일 자체(inode)를 건드리지 않는다. cp는 제자리에서 덮어써서 위험하다.
+# 정리할 임시 폴더. main 안의 local로 두면 안 된다.
+# EXIT 트랩은 main이 끝난 뒤에 돌아서 local 변수가 이미 사라져 있고,
+# set -u 때문에 "tmp: unbound variable"로 실패한다. 게다가 트랩이 실패하면
+# 스크립트의 종료 코드까지 1이 되어, 빌드가 성공했는데도 앱이 실패로 본다.
+WORKDIR=""
+
+cleanup() {
+  if [ -n "${WORKDIR:-}" ] && [ -d "$WORKDIR" ]; then
+    rm -rf "$WORKDIR"
+  fi
+  # 트랩의 종료 코드가 스크립트의 종료 코드를 덮어쓰지 않도록 반드시 0으로 끝낸다
+  return 0
+}
+trap cleanup EXIT
+
 main() {
   cd "$(dirname "$0")/.."
 
@@ -23,16 +38,14 @@ main() {
     exit 1
   fi
 
-  local tmp
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  WORKDIR="$(mktemp -d)"
 
   echo "최신 코드 내려받는 중..."
-  curl -fsSL -o "$tmp/src.zip" "$url"
-  unzip -qo "$tmp/src.zip" -d "$tmp/src"
+  curl -fsSL -o "$WORKDIR/src.zip" "$url"
+  unzip -qo "$WORKDIR/src.zip" -d "$WORKDIR/src"
 
   local src
-  src="$(find "$tmp/src" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  src="$(find "$WORKDIR/src" -mindepth 1 -maxdepth 1 -type d | head -1)"
   if [ -z "$src" ] || [ ! -d "$src/Sources" ]; then
     echo "내려받은 압축 파일에서 소스를 찾지 못했습니다." >&2
     exit 1
