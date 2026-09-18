@@ -147,8 +147,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let cornerItem = NSMenuItem(title: "위치", action: nil, keyEquivalent: "")
         let cornerMenu = NSMenu()
         cornerMenu.autoenablesItems = false
-        for value in BadgeManager.Corner.allCases {
-            let item = NSMenuItem(title: value.title, action: #selector(setCorner(_:)), keyEquivalent: "")
+        // 미션 컨트롤 위에 직접 그릴 때는 이름표를 썸네일 가운데에 맞추므로 좌우 선택이 없다.
+        // (버튼 영역이 실제 썸네일보다 넓어, 한쪽에 붙이면 옆 썸네일로 밀려난다)
+        let corners: [(BadgeManager.Corner, String)] = settings.spacesBarOverlayWorks
+            ? [(.bottomRight, "아래"), (.topRight, "위")]
+            : BadgeManager.Corner.allCases.map { ($0, $0.title) }
+        for (value, title) in corners {
+            let item = NSMenuItem(title: title, action: #selector(setCorner(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = value.rawValue
             item.state = settings.badgeCorner == value ? .on : .off

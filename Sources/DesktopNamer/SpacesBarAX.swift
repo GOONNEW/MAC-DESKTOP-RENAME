@@ -228,13 +228,16 @@ enum SpacesBarAX {
     /// 트리가 늘 비어 있어 아무것도 확인할 수 없었다. 열렸을 때 한 번 찍어 둔다.
     private(set) static var lastOpenSnapshot: String?
     private static var lastOpenButtonCount = 0
+    private static var lastTreeDump: [String] = []
 
     private static var previousSignature = ""
 
     private static func rememberWhileOpen(host: String, groups: [AXUIElement], buttons: [SpaceButton],
                                           sample: AXUIElement?, stable: Bool) {
         guard stable else { return }
-        guard lastOpenSnapshot == nil || buttons.count != lastOpenButtonCount else { return }
+        // 멈춰 있는 동안에는 매번 갱신한다. 한 번만 찍어 두면 이름표를 놓은 기록과 서로 다른
+        // 순간의 것이 되어 대조가 안 된다. 비싼 트리 덤프만 처음 한 번으로 아낀다.
+        let needsTree = lastOpenSnapshot == nil || buttons.count != lastOpenButtonCount
         lastOpenButtonCount = buttons.count
         var lines: [String] = ["\(host)에서 읽음, 공간 버튼 \(buttons.count)개 (움직임이 멈춘 상태)"]
         for button in buttons {
@@ -248,7 +251,7 @@ enum SpacesBarAX {
         // 버튼 하나의 속성과 자식을 전부 찍는다.
         // 버튼 영역에는 썸네일 그림과 아래 글자, 여백이 함께 들어 있어 그림의 정확한 자리를
         // 알 수 없다. 자식 요소나 다른 속성에 그림만의 자리가 들어 있는지 확인하기 위함이다.
-        if let sample {
+        if needsTree, let sample {
             var namesRef: CFArray?
             let names = AXUIElementCopyAttributeNames(sample, &namesRef) == .success
                 ? (namesRef as? [String] ?? []) : []
@@ -267,9 +270,15 @@ enum SpacesBarAX {
                 dump(kid, depth: 1, maxDepth: 2, limit: 60, into: &lines)
             }
         }
-        lines.append("트리:")
-        for group in groups {
-            dump(group, depth: 1, maxDepth: 5, limit: 70, into: &lines)
+        if needsTree {
+            lines.append("트리:")
+            for group in groups {
+                dump(group, depth: 1, maxDepth: 5, limit: 70, into: &lines)
+            }
+            lastTreeDump = lines
+        } else if lines.count < lastTreeDump.count {
+            // 트리 부분은 처음 찍어 둔 것을 이어 붙인다
+            lines.append(contentsOf: lastTreeDump.drop { !$0.hasPrefix("버튼 속성") && $0 != "트리:" })
         }
         lastOpenSnapshot = lines.prefix(70).joined(separator: "\n")
     }

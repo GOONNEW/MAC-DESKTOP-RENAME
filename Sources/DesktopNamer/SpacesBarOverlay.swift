@@ -87,7 +87,8 @@ final class SpacesBarOverlay {
             let f = panels[index].frame
             let b = item.frame
             placed.append("\(item.name): 버튼(\(Int(b.minX)),\(Int(b.minY)) \(Int(b.width))×\(Int(b.height)))"
-                + " 이름표(\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
+                + " 이름표(\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))"
+                + " 중심차 \(Int(f.midX - b.midX))")
         }
         lastPlacement = placed.joined(separator: "\n    ")
         for extra in labels.count..<panels.count {
@@ -225,14 +226,18 @@ final class SpacesBarOverlay {
                              width: width - 10, height: field.frame.height)
         panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
 
+        // 가로는 언제나 가운데에 놓는다.
+        //
+        // 접근성이 알려주는 버튼 영역은 실제 썸네일보다 넓다(좌우 여백 포함). 그래서 오른쪽에
+        // 붙이면 이름표가 옆 썸네일 쪽으로 밀려난다. 실제로 이름이 한 칸씩 오른쪽으로 치우쳐
+        // 보였고, 어긋난 정도가 끝까지 일정했다. 배율이 아니라 정렬 때문이라는 뜻이다.
+        // 버튼 영역과 썸네일은 중심이 같으므로, 가운데에 놓으면 너비를 잘못 알아도 맞는다.
         let margin: CGFloat = 3
-        var x: CGFloat
+        var x = button.midX - width / 2
         var y: CGFloat
         switch corner {
-        case .bottomRight: x = thumbnail.maxX - width - margin; y = thumbnail.minY + margin
-        case .bottomLeft:  x = thumbnail.minX + margin;         y = thumbnail.minY + margin
-        case .topRight:    x = thumbnail.maxX - width - margin; y = thumbnail.maxY - height - margin
-        case .topLeft:     x = thumbnail.minX + margin;         y = thumbnail.maxY - height - margin
+        case .bottomRight, .bottomLeft: y = thumbnail.minY + margin
+        case .topRight, .topLeft:       y = thumbnail.maxY - height - margin
         }
         // 마지막 안전장치: 버튼 영역을 벗어나지 않게 민다
         x = min(max(x, button.minX), button.maxX - width)
