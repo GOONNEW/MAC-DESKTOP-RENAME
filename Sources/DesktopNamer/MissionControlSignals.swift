@@ -16,6 +16,8 @@ final class MissionControlSignals {
     var onCloseLikely: ((String, Bool) -> Void)?
     /// 아직 열려 있음이 확인될 때마다 호출된다 (자동 숨김 타이머를 미루기 위함)
     var onStillOpen: (() -> Void)?
+    /// 열려 있는 동안 자주 호출된다 (공간 막대 위 이름표 위치를 맞추기 위함)
+    var onTick: (() -> Void)?
 
     /// 지금 이름이 보이는 중인지. 보이는 중에 들어온 여는 동작은 "닫기"로 해석한다.
     var isShowing: (() -> Bool)?
@@ -33,6 +35,7 @@ final class MissionControlSignals {
     private var closedPolls = 0
     private var lastClosedAt = Date.distantPast
     private var lastAutoOpenAt = Date.distantPast
+    private var ticks = 0
     /// 이 시각까지는 다시 열지 않는다 (닫은 직후의 잔여 신호로 되살아나지 않게)
     private var reopenBlockedUntil = Date.distantPast
     /// 열려 있다는 판단 때문에 약한 닫힘 신호를 무시한 횟수
@@ -43,7 +46,8 @@ final class MissionControlSignals {
     private(set) var lastOpenNote = "없음"
 
     var note: String {
-        "트랙패드 \(trackpad.diagnostics) / 키보드 \(keyboard.lastNote)"
+        "열림 판단 근거: \(axWorks ? "접근성 트리 (가장 확실)" : "알림/화면 지표")"
+            + "\n  트랙패드 \(trackpad.diagnostics) / 키보드 \(keyboard.lastNote)"
             + (keyboard.lastTouchCount >= 0 ? ", 마지막 제스처 손가락 \(keyboard.lastTouchCount)개" : "")
             + "\n열림 확인: \(probe.note)"
     }
@@ -102,7 +106,9 @@ final class MissionControlSignals {
         })
         if let scroll { inputMonitors.append(scroll) }
 
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // 열려 있는 동안 썸네일 위 이름표가 따라가야 하므로 촘촘히 본다.
+        // 접근성 트리를 읽는 건 가벼운 편이고, 화면 지표는 아래에서 드문드문만 잰다.
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             self?.poll()
         }
     }
@@ -140,30 +146,51 @@ final class MissionControlSignals {
 
     // MARK: - 주기 확인
 
+    /// 지금 Mission Control이 열려 있는가. 모르면 nil.
+    ///
+    /// 접근성 트리에 공간 막대가 보이면 그것이 가장 확실하다. 추측이 아니라 확인이다.
+    /// 권한이 없거나 구조가 바뀌어 못 읽으면 예전 방식(알림/화면 지표)으로 넘어간다.
+    private func missionControlIsOpen() -> Bool? {
+        if let byTree = SpacesBarAX.isOpen() {
+            axWorks = true
+            return byTree
+        }
+        return probe.looksActive()
+    }
+
+    /// 접근성 트리로 판단할 수 있는가 (진단용)
+    private(set) var axWorks = false
+
     private func poll() {
+        ticks += 1
         let showing = isShowing?() == true
         guard showing else {
             closedPolls = 0
-            // 닫은 직후에는 잔상이 남을 수 있으므로 조금 지난 뒤부터 기준선을 잰다
-            if probe.usesMetrics, Date().timeIntervalSince(lastClosedAt) > 1.5 { probe.noteQuiet() }
+            // 화면 지표는 창 목록을 통째로 읽어야 해서 비싸다. 1초에 한 번만 잰다.
+            // 닫은 직후에는 잔상이 남을 수 있으므로 조금 지난 뒤부터 잰다.
+            if probe.usesMetrics, ticks % 5 == 0, Date().timeIntervalSince(lastClosedAt) > 1.5 {
+                probe.noteQuiet()
+            }
             // 차이가 뚜렷하게 배워진 경우에만, 제스처를 놓쳤어도 열린 것을 알아챈다
             // (Mission Control 키, 핫코너, Dock 아이콘으로 연 경우)
-            if probe.looksActiveStrict() == true,
-               Date().timeIntervalSince(lastAutoOpenAt) > 2 {
+            // 접근성 트리로 확인되면 제스처를 놓쳤어도 바로 알아챈다
+            let confirmed = SpacesBarAX.isOpen() == true || probe.looksActiveStrict() == true
+            if confirmed, Date().timeIntervalSince(lastAutoOpenAt) > 2 {
                 lastAutoOpenAt = Date()
                 open("Mission Control 열림 확인", automatic: true)
             }
             return
         }
 
-        switch probe.looksActive() {
+        switch missionControlIsOpen() {
         case .some(true):
             closedPolls = 0
             // 아직 열려 있다. 자동 숨김 타이머를 미뤄 이름이 먼저 사라지지 않게 한다.
             onStillOpen?()
+            onTick?()
         case .some(false):
             closedPolls += 1
-            if closedPolls >= 2 { close("Mission Control 닫힘 확인", strong: true) }
+            if closedPolls >= 3 { close("Mission Control 닫힘 확인", strong: true) }
         case .none:
             closedPolls = 0
         }
@@ -208,7 +235,7 @@ final class MissionControlSignals {
     /// 실제로 닫혔음이 확인된 경우에만 즉시 닫는다.
     /// 열림 여부를 모르는 상태(nil)에서는 아무것도 하지 않아, 예전 동작을 그대로 남긴다.
     private func closeIfConfirmed(_ reason: String) {
-        guard probe.looksActive() == false else { return }
+        guard missionControlIsOpen() == false else { return }
         close(reason, strong: true, blockReopen: 0.4)
     }
 
@@ -219,7 +246,7 @@ final class MissionControlSignals {
     private func close(_ reason: String, strong: Bool = false, blockReopen: TimeInterval = 0) {
         guard isShowing?() == true else { return }
 
-        if !strong, probe.looksActive() == true {
+        if !strong, missionControlIsOpen() == true {
             // 열려 있는 동안 클릭·스크롤을 무시하는 것은 원래 의도한 동작이다.
             // (미션 컨트롤을 구경하는 중에 이름표가 꺼지지 않게 하려는 것)
             // 그러니 이것만으로 판단이 틀렸다고 보면 안 된다. 실제로 그렇게 했더니
@@ -258,6 +285,8 @@ final class MissionControlSignals {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self, self.isShowing?() != true else { return }
             guard self.probe.looksActive() == true else { return }
+            // 접근성 트리로 판단 중이라면 화면 지표는 쓰이지 않으므로 버릴 것도 없다
+            guard !self.axWorks else { return }
             self.probe.distrust()
         }
     }

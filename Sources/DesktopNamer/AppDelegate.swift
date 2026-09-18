@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var renameWindow: RenameWindowController?
     private var badges: BadgeManager?
+    private var barOverlay: SpacesBarOverlay?
     private let signals = MissionControlSignals()
     private var updater: Updater?
     private let updateChecker = UpdateChecker()
@@ -26,12 +27,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore)
         badges = BadgeManager(spaces: spaceManager, names: nameStore)
+        barOverlay = SpacesBarOverlay(spaces: spaceManager, names: nameStore)
         signals.isShowing = { [weak self] in self?.badges?.isVisible ?? false }
-        signals.onOpenLikely = { [weak self] reason in self?.badges?.show(reason: reason) }
+        signals.onOpenLikely = { [weak self] reason in
+            self?.badges?.show(reason: reason)
+            // 공간 막대가 그려질 시간을 조금 준 뒤 그 위에 이름을 덧그린다
+            for delay in [0.25, 0.45, 0.7] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self?.barOverlay?.update() }
+            }
+        }
         signals.onCloseLikely = { [weak self] reason, force in
             self?.badges?.hide(reason: reason, force: force)
+            self?.barOverlay?.hide()
         }
         signals.onStillOpen = { [weak self] in self?.badges?.keepAlive() }
+        signals.onTick = { [weak self] in self?.barOverlay?.update() }
         signals.start()
         statusBar = StatusBarController(
             spaces: spaceManager,
@@ -77,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] enabled in
                 guard let self, let badges = self.badges else { return }
                 enabled ? badges.start() : badges.stop()
+                enabled ? self.barOverlay?.start() : self.barOverlay?.stop()
             }
             .store(in: &cancellables)
 
@@ -171,6 +182,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 진단 정보를 보여주고 클립보드로 복사할 수 있게 한다.
     private func showDiagnostics() {
         var text = badges?.diagnostics() ?? ""
+        text += "\n\n\(barOverlay?.diagnostics ?? "공간 막대 덧그리기: 없음")"
+        text += "\n\n공간 막대 접근성 트리:\n" + SpacesBarAX.treeDump()
         text += "\n\n업데이트: \(updateChecker.note)"
         text += "\n\nMission Control 동작 감지\n  \(signals.note)\n  마지막 여는 동작: \(signals.lastOpenNote)"
         let alert = NSAlert()
@@ -202,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         updateTimer?.invalidate()
         badges?.stop()
+        barOverlay?.stop()
         signals.stop()
         spaceManager.stop()
     }
