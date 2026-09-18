@@ -28,7 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         badges = BadgeManager(spaces: spaceManager, names: nameStore)
         signals.isShowing = { [weak self] in self?.badges?.isVisible ?? false }
         signals.onOpenLikely = { [weak self] reason in self?.badges?.show(reason: reason) }
-        signals.onCloseLikely = { [weak self] reason in self?.badges?.hide(reason: reason) }
+        signals.onCloseLikely = { [weak self] reason, force in
+            self?.badges?.hide(reason: reason, force: force)
+        }
         signals.onStillOpen = { [weak self] in self?.badges?.keepAlive() }
         signals.start()
         statusBar = StatusBarController(

@@ -169,8 +169,16 @@ final class BadgeManager {
     /// 오래 열어 두어도 이름이 먼저 사라지지 않게 한다.
     func keepAlive() {
         guard running, isVisible else { return }
+        // 열림 판단이 틀리면 이름표가 화면에 영원히 남는다. 절대 상한을 둔다.
+        if let shownAt, Date().timeIntervalSince(shownAt) > maxVisible {
+            hide(reason: "너무 오래 보임", force: true)
+            return
+        }
         armAutoHide()
     }
+
+    /// 아무리 열려 있다고 해도 이 시간이 지나면 숨긴다
+    private let maxVisible: TimeInterval = 60
 
     /// 닫힘 신호를 모두 놓쳤을 때의 마지막 보루.
     /// 실제로 열려 있음이 확인되는 동안에는 keepAlive()가 계속 다시 걸어 준다.
@@ -181,10 +189,11 @@ final class BadgeManager {
         }
     }
 
-    func hide(reason: String) {
+    /// - Parameter force: true면 막 띄운 직후여도 즉시 숨긴다 (닫힘이 확실할 때)
+    func hide(reason: String, force: Bool = false) {
         guard isVisible else { return }
         // 막 보이기 시작한 직후(여는 제스처의 잔여 이벤트)는 무시한다
-        if let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
+        if !force, let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
         setVisible(false)
         shownAt = nil

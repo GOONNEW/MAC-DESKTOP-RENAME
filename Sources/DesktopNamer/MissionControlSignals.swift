@@ -12,7 +12,8 @@ import AppKit
 final class MissionControlSignals {
     /// 메인 스레드에서 호출된다.
     var onOpenLikely: ((String) -> Void)?
-    var onCloseLikely: ((String) -> Void)?
+    /// 두 번째 인자가 true면 막 띄운 직후여도 즉시 숨긴다
+    var onCloseLikely: ((String, Bool) -> Void)?
     /// 아직 열려 있음이 확인될 때마다 호출된다 (자동 숨김 타이머를 미루기 위함)
     var onStillOpen: (() -> Void)?
 
@@ -32,6 +33,10 @@ final class MissionControlSignals {
     private var closedPolls = 0
     private var lastClosedAt = Date.distantPast
     private var lastAutoOpenAt = Date.distantPast
+    /// 이 시각까지는 다시 열지 않는다 (닫은 직후의 잔여 신호로 되살아나지 않게)
+    private var reopenBlockedUntil = Date.distantPast
+    /// 열려 있다는 판단 때문에 약한 닫힘 신호를 무시한 횟수
+    private var ignoredCloses = 0
     private(set) var isRunning = false
     private(set) var lastOpenNote = "없음"
 
@@ -68,7 +73,8 @@ final class MissionControlSignals {
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             // 데스크탑이 바뀌었다는 건 Mission Control에서 하나를 골랐거나 직접 전환한 것이다
-            self?.close("데스크탑 전환", strong: true)
+            // 미션 컨트롤에서 데스크탑을 골랐거나 직접 전환한 것이다. 확실한 닫힘이다.
+            self?.close("데스크탑 전환", strong: true, blockReopen: 1.2)
         })
         observers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
@@ -78,7 +84,9 @@ final class MissionControlSignals {
 
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
             let reason = event.type == .keyDown ? "키 입력" : "클릭"
-            // 클릭 직후 화면이 바뀌는 데 시간이 걸리므로 조금 늦게 판단한다
+            // 이미 닫혔음이 확인되면 기다리지 않고 바로 숨긴다
+            self?.closeIfConfirmed(reason)
+            // 클릭 직후 화면이 바뀌는 데 시간이 걸리므로 조금 뒤 한 번 더 본다
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self?.close(reason) }
         })
         if let monitor { inputMonitors.append(monitor) }
@@ -87,6 +95,7 @@ final class MissionControlSignals {
         // (마우스를 움직였다고 닫힌 것으로 보지는 않는다. Mission Control 안에서
         //  썸네일을 훑어보는 동안 이름이 먼저 사라져 버리기 때문이다.)
         let scroll = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel], handler: { [weak self] _ in
+            self?.closeIfConfirmed("스크롤")
             self?.close("스크롤")
         })
         if let scroll { inputMonitors.append(scroll) }
@@ -119,11 +128,11 @@ final class MissionControlSignals {
             open("Mission Control 알림")
         case 1205:
             // 앱 창 보기(App Exposé)는 데스크탑 썸네일이 아니므로 이름을 띄우지 않는다
-            close("앱 창 보기", strong: true)
+            close("앱 창 보기", strong: true, blockReopen: 0.8)
         case 1206:
-            close("데스크탑 보기", strong: true)
+            close("데스크탑 보기", strong: true, blockReopen: 0.8)
         default:
-            close("Mission Control 닫힘 알림", strong: true)
+            close("Mission Control 닫힘 알림", strong: true, blockReopen: 0.6)
         }
     }
 
@@ -140,7 +149,7 @@ final class MissionControlSignals {
             if probe.looksActiveStrict() == true,
                Date().timeIntervalSince(lastAutoOpenAt) > 2 {
                 lastAutoOpenAt = Date()
-                open("Mission Control 열림 확인")
+                open("Mission Control 열림 확인", automatic: true)
             }
             return
         }
@@ -160,8 +169,12 @@ final class MissionControlSignals {
 
     // MARK: - 열기/닫기
 
-    private func open(_ reason: String) {
+    /// - Parameter automatic: 사용자가 한 동작이 아니라 화면 지표로 추측한 열림.
+    ///   이 경우에만 "방금 닫았으니 잠시 열지 말기"를 적용한다.
+    ///   제스처나 WindowServer 알림은 사용자의 뜻이거나 확실한 사실이므로 절대 막지 않는다.
+    private func open(_ reason: String, automatic: Bool = false) {
         let now = Date()
+        if automatic, now < reopenBlockedUntil { return }
         // 같은 쓸기의 반복 감지는 무시
         if now.timeIntervalSince(lastGestureAt) < 0.4 { return }
         lastGestureAt = now
@@ -169,7 +182,7 @@ final class MissionControlSignals {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         // 이미 보이는 중에 또 여는 동작이 들어오면 "닫기"로 해석한다.
-        // 다만 Dock 창 개수로 아직 열려 있음이 확인되면 그쪽을 믿는다. (약한 신호로 넘긴다)
+        // 다만 아직 열려 있음이 확인되면 그쪽을 믿는다. (약한 신호로 넘긴다)
         if isShowing?() == true {
             lastOpenNote = "\(reason) → 닫기 (\(formatter.string(from: Date())))"
             close(reason + " (다시)")
@@ -188,13 +201,41 @@ final class MissionControlSignals {
         }
     }
 
-    /// - Parameter strong: true면 실제 상태와 무관하게 닫는다.
-    ///   false(약한 신호)는 Dock 창 개수가 "아직 열려 있다"고 하면 무시한다.
-    private func close(_ reason: String, strong: Bool = false) {
+    /// 실제로 닫혔음이 확인된 경우에만 즉시 닫는다.
+    /// 열림 여부를 모르는 상태(nil)에서는 아무것도 하지 않아, 예전 동작을 그대로 남긴다.
+    private func closeIfConfirmed(_ reason: String) {
+        guard probe.looksActive() == false else { return }
+        close(reason, strong: true, blockReopen: 0.4)
+    }
+
+    /// - Parameters:
+    ///   - strong: true면 실제 상태와 무관하게 닫는다.
+    ///     false(약한 신호)는 "아직 열려 있다"고 판단되면 무시한다.
+    ///   - blockReopen: 닫은 뒤 이 시간 동안은 다시 열지 않는다.
+    private func close(_ reason: String, strong: Bool = false, blockReopen: TimeInterval = 0) {
         guard isShowing?() == true else { return }
-        if !strong, probe.looksActive() == true { return }
+
+        if !strong, probe.looksActive() == true {
+            ignoredCloses += 1
+            // 평소 화면에서 클릭하고 입력하는데도 계속 "열려 있다"고 한다면 그 판단이 틀렸다.
+            // 그대로 두면 이름표가 화면에 남아 버리므로, 근거를 버리고 숨긴다.
+            guard ignoredCloses >= 3 else { return }
+            probe.distrust()
+            ignoredCloses = 0
+            finishClose(reason + " (열림 판단이 틀림)", force: true, blockReopen: blockReopen)
+            return
+        }
+
+        ignoredCloses = 0
+        finishClose(reason, force: strong, blockReopen: blockReopen)
+    }
+
+    private func finishClose(_ reason: String, force: Bool, blockReopen: TimeInterval) {
+        if blockReopen > 0 {
+            reopenBlockedUntil = max(reopenBlockedUntil, Date().addingTimeInterval(blockReopen))
+        }
         lastClosedAt = Date()
         closedPolls = 0
-        onCloseLikely?(reason)
+        onCloseLikely?(reason, force)
     }
 }

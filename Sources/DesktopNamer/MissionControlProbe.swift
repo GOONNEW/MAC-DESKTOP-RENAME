@@ -92,6 +92,8 @@ final class MissionControlProbe {
 
     // MARK: - 지표 학습
 
+    /// 틀린 것으로 판명돼 쓰지 않는 지표 번호
+    private var bannedMetrics: Set<Int> = []
     private var quiet: [[Int]] = Array(repeating: [], count: metricNames.count)
     private var open: [[Int]] = Array(repeating: [], count: metricNames.count)
     /// 가장 최근에 잰 지표 값들
@@ -125,7 +127,36 @@ final class MissionControlProbe {
     func reset() {
         quiet = Array(repeating: [], count: Self.metricNames.count)
         open = Array(repeating: [], count: Self.metricNames.count)
+        bannedMetrics.removeAll()
     }
+
+    /// "열려 있다"는 판단이 틀렸음이 드러났을 때 부른다.
+    ///
+    /// 사용자가 평소 화면에서 클릭하고 입력하는데도 계속 열려 있다고 하면, 그 근거는
+    /// 틀린 것이다. 그대로 두면 이름표가 화면에 영원히 남는다. (실제로 그랬다)
+    /// 알림을 믿고 있었다면 닫힌 것으로 되돌리고, 지표를 쓰고 있었다면 그 지표를 버린다.
+    func distrust() {
+        if notificationsWork {
+            openByNotification = false
+            return
+        }
+        if let index = choice?.index {
+            bannedMetrics.insert(index)
+            distrustNote = "\(Self.metricNames[index]) 지표를 버림"
+        } else {
+            distrustNote = "버릴 지표가 없어 학습을 초기화"
+            reset()
+        }
+    }
+
+    private(set) var distrustNote: String?
+
+    /// "Dock이 최상위" 지표의 번호.
+    ///
+    /// Mission Control이 떠 있는 동안에는 Dock이 활성 앱이 된다. 뜻이 분명한 신호이므로,
+    /// 구분이 되기만 하면 차이(gap)가 작아도 다른 지표보다 먼저 쓴다.
+    /// 창 개수 같은 지표는 우연히 차이가 커 보일 수 있어, 큰 차이가 곧 정확함을 뜻하지 않는다.
+    private static let preferredMetric = 6
 
     /// 고른 지표: 번호, 기준값, 열렸을 때 값이 더 큰지, 평소와 열림의 차이
     private struct Choice {
@@ -133,6 +164,8 @@ final class MissionControlProbe {
         let threshold: Int
         let openIsHigher: Bool
         let gap: Int
+        /// 어느 지표를 고를지 비교할 때 쓰는 점수
+        var score: Int { gap + (index == MissionControlProbe.preferredMetric ? 100 : 0) }
     }
 
     private static func percentile(_ values: [Int], _ fraction: Double) -> Int? {
@@ -146,7 +179,7 @@ final class MissionControlProbe {
     private var choice: Choice? {
         guard quiet[0].count >= 10, open[0].count >= 3 else { return nil }
         var best: Choice?
-        for index in Self.metricNames.indices {
+        for index in Self.metricNames.indices where !bannedMetrics.contains(index) {
             guard let quietHigh = Self.percentile(quiet[index], 0.9),
                   let quietLow = Self.percentile(quiet[index], 0.1),
                   let openMedian = Self.percentile(open[index], 0.5) else { continue }
@@ -164,7 +197,7 @@ final class MissionControlProbe {
             } else {
                 continue
             }
-            if best == nil || candidate.gap > best!.gap { best = candidate }
+            if best == nil || candidate.score > best!.score { best = candidate }
         }
         return best
     }
@@ -218,6 +251,10 @@ final class MissionControlProbe {
                 + (isStronglyCalibrated ? " / 열림 감지까지 가능" : " / 닫힘 확인만"))
         } else {
             lines.append("고른 지표: 없음 (평소와 열림이 구분되는 지표를 아직 못 찾음)")
+        }
+        if let distrustNote { lines.append("바로잡은 기록: \(distrustNote)") }
+        if !bannedMetrics.isEmpty {
+            lines.append("버린 지표: \(bannedMetrics.sorted().map { Self.metricNames[$0] }.joined(separator: ", "))")
         }
         lines.append("지표별 값 — 지금 / 평소(10~90%) / 열림(중앙값) / 표본 평소 \(quiet[0].count)개, 열림 \(open[0].count)개")
         for index in Self.metricNames.indices {
