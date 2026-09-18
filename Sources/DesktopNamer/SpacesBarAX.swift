@@ -23,12 +23,21 @@ import ApplicationServices
 ///    안 찍히는데, 위에 덧그리면 그 문제가 사라진다.
 enum SpacesBarAX {
     struct SpaceButton {
-        /// AppKit 좌표계(왼쪽 아래가 원점)로 변환한 화면 위 위치
+        /// AppKit 좌표계(왼쪽 아래가 원점)로 변환하고 크기를 바로잡은 위치
         let frame: CGRect
-        /// Mission Control이 붙인 이름 (예: "데스크탑 3", "Safari")
+        /// 접근성이 알려준 그대로의 값 (진단용)
+        let rawFrame: CGRect
+        /// 크기에 곱한 보정 배율 (진단용)
+        let scale: CGFloat
+        /// Mission Control이 붙인 이름 (예: "exit to 데스크탑 3", "exit to full screen Safari")
         let label: String
+
         /// 이름 끝의 숫자. 기본 이름일 때 데스크탑 번호를 뜻한다.
+        ///
+        /// 전체 화면 공간은 "exit to full screen Windows 11"처럼 앱 이름에 숫자가 들어 있어
+        /// 데스크탑 번호로 오해할 수 있다. 그런 항목은 번호로 보지 않는다.
         var number: Int? {
+            guard !label.lowercased().contains("full screen") else { return nil }
             let digits = label.reversed().prefix { $0.isNumber }
             guard !digits.isEmpty else { return nil }
             return Int(String(digits.reversed()))
@@ -104,16 +113,36 @@ enum SpacesBarAX {
                 notes.append("\(host.name)에 mc 그룹 없음")
                 continue
             }
-            var buttons: [SpaceButton] = []
+            // 목록(= 디스플레이)별로 모은 뒤 크기를 바로잡는다
+            var perList: [[(label: String, raw: CGRect)]] = []
             for group in groups {
                 guard let list = findDescendant(of: group, identifier: "mc.spaces.list", maxDepth: 6)
                     ?? findDescendant(of: group, identifier: "mc.spaces", maxDepth: 6) else { continue }
+                var items: [(label: String, raw: CGRect)] = []
                 for item in listItems(of: list) {
-                    guard let rect = frame(of: item) else { continue }
+                    guard let raw = rawFrame(of: item) else { continue }
                     let label = (attribute(item, kAXDescriptionAttribute) as? String)
                         ?? (attribute(item, kAXTitleAttribute) as? String)
                         ?? ""
-                    buttons.append(SpaceButton(frame: rect, label: label))
+                    items.append((label, raw))
+                }
+                if !items.isEmpty { perList.append(items) }
+            }
+
+            let scales = perList.map { sizeScale(for: $0.map(\.raw)) }
+            // 버튼이 한두 개뿐인 목록은 배율을 알 수 없다. 다른 목록에서 알아낸 값을 빌린다.
+            let known = scales.filter { $0 != 1 }
+            let fallback: CGFloat = known.isEmpty ? 1 : known[known.count / 2]
+
+            var buttons: [SpaceButton] = []
+            for (index, items) in perList.enumerated() {
+                let scale = items.count >= 3 ? scales[index] : (scales[index] == 1 ? fallback : scales[index])
+                for item in items {
+                    let corrected = CGRect(x: item.raw.minX, y: item.raw.minY,
+                                           width: item.raw.width * scale, height: item.raw.height * scale)
+                    guard let flipped = flip(corrected) else { continue }
+                    buttons.append(SpaceButton(frame: flipped, rawFrame: item.raw,
+                                               scale: scale, label: item.label))
                 }
             }
             if !buttons.isEmpty {
@@ -124,6 +153,30 @@ enum SpacesBarAX {
             notes.append("\(host.name)의 mc 그룹에서 공간 버튼을 찾지 못함")
         }
         return Scan(buttons: [], source: "-", note: notes.joined(separator: "; "))
+    }
+
+    /// 크기 보정 배율을 알아낸다.
+    ///
+    /// 접근성이 **위치는 포인트로, 크기는 픽셀로** 알려주는 경우가 있다. 레티나 화면에서는
+    /// 크기가 실제의 두 배가 되어, 이름표가 썸네일 바깥(오른쪽 아래)으로 밀려난다.
+    /// 실제로 이 맥에서 버튼 간격은 85pt인데 너비를 169pt로 알려주었다. 그대로 믿으면
+    /// 버튼끼리 절반씩 겹친다는 뜻이 되어 앞뒤가 맞지 않는다.
+    ///
+    /// 그래서 숫자를 미리 정하지 않고, 버튼들이 늘어선 간격과 너비를 비교해 알아낸다.
+    /// 나란히 놓인 썸네일의 너비는 간격보다 클 수 없다.
+    private static func sizeScale(for frames: [CGRect]) -> CGFloat {
+        let sorted = frames.sorted { $0.minX < $1.minX }
+        guard sorted.count >= 3 else { return 1 }
+        var pitches: [CGFloat] = []
+        for (left, right) in zip(sorted, sorted.dropFirst()) {
+            pitches.append(right.minX - left.minX)
+        }
+        pitches.sort()
+        let pitch = pitches[pitches.count / 2]
+        let width = sorted[sorted.count / 2].width
+        guard pitch > 1, width > 0 else { return 1 }
+        let factor = (width / pitch).rounded()
+        return factor >= 2 ? 1 / factor : 1
     }
 
     /// 목록 안의 버튼들. AXList 아래에 바로 있을 수도, 한 겹 더 들어가 있을 수도 있다.
@@ -164,8 +217,11 @@ enum SpacesBarAX {
         var lines: [String] = ["\(host)에서 읽음, 공간 버튼 \(buttons.count)개"]
         for button in buttons {
             let f = button.frame
+            let r = button.rawFrame
             lines.append("  \"\(button.label)\" 번호 \(button.number.map(String.init) ?? "-")"
-                + " 버튼영역 (\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
+                + " 원본 (\(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))×\(Int(r.height)))"
+                + " ×\(String(format: "%.2f", button.scale))"
+                + " → (\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
         }
         lines.append("트리:")
         for group in groups {
@@ -250,10 +306,10 @@ enum SpacesBarAX {
         return CGRect(origin: position, size: size)
     }
 
-    /// AppKit 좌표(왼쪽 아래가 원점)로 뒤집은 위치
-    private static func frame(of element: AXUIElement) -> CGRect? {
-        guard let raw = rawFrame(of: element),
-              let primaryHeight = NSScreen.screens.first?.frame.height else { return nil }
+    /// AppKit 좌표(왼쪽 아래가 원점)로 뒤집는다.
+    /// 접근성 좌표의 원점은 주 화면의 왼쪽 위이므로, 주 화면 높이를 기준으로 한 번만 뒤집으면 된다.
+    private static func flip(_ raw: CGRect) -> CGRect? {
+        guard let primaryHeight = NSScreen.screens.first?.frame.height else { return nil }
         return CGRect(x: raw.minX, y: primaryHeight - raw.minY - raw.height,
                       width: raw.width, height: raw.height)
     }

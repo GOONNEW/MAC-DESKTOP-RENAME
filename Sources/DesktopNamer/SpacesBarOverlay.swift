@@ -34,6 +34,8 @@ final class SpacesBarOverlay {
     /// 열린 것 같은데 이름표를 올리지 못한 횟수
     private var misses = 0
     private var fellBack = false
+    /// 마지막으로 이름표를 놓은 자리 (진단용)
+    private(set) var lastPlacement = "-"
 
     init(spaces: SpaceManager, names: NameStore) {
         self.spaces = spaces
@@ -79,9 +81,13 @@ final class SpacesBarOverlay {
         }
 
         ensurePanels(count: labels.count)
+        var placed: [String] = []
         for (index, item) in labels.enumerated() {
             place(panel: panels[index], field: fields[index], text: item.name, over: item.frame)
+            let f = panels[index].frame
+            placed.append("\(item.name)@(\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
         }
+        lastPlacement = placed.joined(separator: " ")
         for extra in labels.count..<panels.count {
             panels[extra].alphaValue = 0
         }
@@ -226,6 +232,7 @@ final class SpacesBarOverlay {
 
     var diagnostics: String {
         "공간 막대 덧그리기: \(running ? (isShowing ? "표시 중" : "대기") : "꺼짐")"
-            + "\(everWorked ? " (성공한 적 있음 → 예전 배지는 끔)" : "")  / \(lastNote)"
+            + "\(everWorked ? " (성공한 적 있음 → 예전 배지는 끔)" : "") / \(lastNote)"
+            + "\n  마지막으로 놓은 자리: \(lastPlacement)"
     }
 }
