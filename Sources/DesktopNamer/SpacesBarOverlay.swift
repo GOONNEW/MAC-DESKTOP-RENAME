@@ -85,9 +85,11 @@ final class SpacesBarOverlay {
         for (index, item) in labels.enumerated() {
             place(panel: panels[index], field: fields[index], text: item.name, over: item.frame)
             let f = panels[index].frame
-            placed.append("\(item.name)@(\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
+            let b = item.frame
+            placed.append("\(item.name): 버튼(\(Int(b.minX)),\(Int(b.minY)) \(Int(b.width))×\(Int(b.height)))"
+                + " 이름표(\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
         }
-        lastPlacement = placed.joined(separator: " ")
+        lastPlacement = placed.joined(separator: "\n    ")
         for extra in labels.count..<panels.count {
             panels[extra].alphaValue = 0
         }
@@ -174,58 +176,65 @@ final class SpacesBarOverlay {
         return (panel, field)
     }
 
-    /// 공간 버튼 안에서 "썸네일 그림"이 차지하는 부분만 골라낸다.
+    /// 공간 버튼 안에서 "썸네일 그림"이 차지하는 부분을 어림한다.
     ///
-    /// 접근성이 알려주는 버튼 영역에는 썸네일 그림뿐 아니라 그 아래의 "데스크탑 N" 글자와
-    /// 여백까지 들어 있다. 버튼 아래쪽에 맞춰 놓았더니 이름표가 공간 막대 바깥,
-    /// 화면 한가운데에 떠 버렸다.
+    /// 접근성이 알려주는 버튼 영역에는 썸네일 그림과 그 아래 "데스크탑 N" 글자가 함께 들어 있다.
     /// 썸네일 그림은 화면과 같은 비율로 축소된 것이므로, 너비에 화면 비율을 곱하면 높이가 나온다.
-    /// 비율 추정이 빗나가도 버튼 밖으로 나가지 않도록 위아래로 묶어 둔다.
+    /// 어림이 빗나가도 버튼 밖으로 나가지 않도록 위아래로 묶는다.
     private func thumbnailRect(in button: CGRect) -> CGRect {
         let screen = NSScreen.screens.first(where: { $0.frame.intersects(button) })
             ?? NSScreen.screens.first
         let ratio = screen.map { $0.frame.height / $0.frame.width } ?? 0.625
         let estimated = button.width * ratio
-        let height = min(max(estimated, button.height * 0.4), button.height * 0.85)
+        let height = min(max(estimated, button.height * 0.5), button.height)
         return CGRect(x: button.minX, y: button.maxY - height, width: button.width, height: height)
     }
 
-    /// 썸네일 그림의 아래쪽 가운데에 이름표를 놓는다
+    /// 썸네일 안에 이름표를 놓는다.
+    ///
+    /// 어떤 경우에도 버튼 영역 밖으로는 나가지 않게 마지막에 묶는다. 접근성이 알려주는 값이
+    /// 늘 정확하지는 않아서(크기가 두 배로 오거나, 여는 도중의 중간값이 섞인다), 계산이
+    /// 빗나가면 이름표가 공간 막대 바깥 화면 한가운데에 떠 버렸다.
     private func place(panel: NSPanel, field: NSTextField, text: String, over button: CGRect) {
         let thumbnail = thumbnailRect(in: button)
-        // 썸네일 높이에 맞춰 글자 크기를 정한다. 썸네일이 작으므로 위아래로 묶어 둔다.
-        // 설정의 크기 비율을 그대로 쓰면 썸네일에서는 너무 커서, 비율만 가져와 줄인다.
+        // 썸네일 높이에 맞춰 글자 크기를 정한다. 설정의 비율을 그대로 쓰면 썸네일에서는
+        // 너무 커서, 비율만 가져와 줄이고 위아래로 묶는다.
         let ratio = size.ratio * 1.4
         var pointSize = max(9, min(20, (thumbnail.height * ratio).rounded()))
-        let maxWidth = thumbnail.width * 0.96
+        // 이름표는 버튼보다 넓을 수 없다
+        let maxWidth = max(24, button.width - 8)
         while pointSize > 8 {
             field.font = .systemFont(ofSize: pointSize, weight: .bold)
             field.stringValue = text
             field.sizeToFit()
-            if field.frame.width + 12 <= maxWidth { break }
+            if field.frame.width + 10 <= maxWidth { break }
             pointSize -= 1
         }
         field.font = .systemFont(ofSize: pointSize, weight: .bold)
         field.stringValue = text
         field.sizeToFit()
 
-        let width = min(field.frame.width + 12, maxWidth)
-        let height = field.frame.height + 6
+        let width = min(field.frame.width + 10, maxWidth)
+        let height = min(field.frame.height + 5, max(14, button.height - 4))
         panel.contentView?.layer?.cornerRadius = (height * 0.3).rounded()
-        field.frame = CGRect(x: 6, y: 3, width: width - 12, height: field.frame.height)
+        field.frame = CGRect(x: 5, y: (height - field.frame.height) / 2,
+                             width: width - 10, height: field.frame.height)
         panel.contentView?.frame = CGRect(x: 0, y: 0, width: width, height: height)
 
-        let margin: CGFloat = 4
-        let x: CGFloat
-        let y: CGFloat
+        let margin: CGFloat = 3
+        var x: CGFloat
+        var y: CGFloat
         switch corner {
         case .bottomRight: x = thumbnail.maxX - width - margin; y = thumbnail.minY + margin
         case .bottomLeft:  x = thumbnail.minX + margin;         y = thumbnail.minY + margin
         case .topRight:    x = thumbnail.maxX - width - margin; y = thumbnail.maxY - height - margin
         case .topLeft:     x = thumbnail.minX + margin;         y = thumbnail.maxY - height - margin
         }
-        let origin = CGPoint(x: x, y: y)
-        panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
+        // 마지막 안전장치: 버튼 영역을 벗어나지 않게 민다
+        x = min(max(x, button.minX), button.maxX - width)
+        y = min(max(y, button.minY), button.maxY - height)
+
+        panel.setFrame(CGRect(x: x, y: y, width: width, height: height), display: true)
         panel.alphaValue = 1
         panel.orderFrontRegardless()
     }

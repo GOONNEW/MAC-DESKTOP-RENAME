@@ -165,8 +165,22 @@ enum SpacesBarAX {
     /// 그래서 숫자를 미리 정하지 않고, 버튼들이 늘어선 간격과 너비를 비교해 알아낸다.
     /// 나란히 놓인 썸네일의 너비는 간격보다 클 수 없다.
     private static func sizeScale(for frames: [CGRect]) -> CGFloat {
+        if let detected = detectScale(for: frames) {
+            learnedScale = detected
+            return detected
+        }
+        // 미션 컨트롤이 열리고 닫히는 동안에는 버튼이 한두 개만 보이는 순간이 있다.
+        // 그때마다 배율이 1로 되돌아가면 이름표가 엉뚱한 자리로 튄다. 배율은 화면의 성질이지
+        // 순간의 성질이 아니므로, 한 번 알아낸 값을 계속 쓴다.
+        return learnedScale ?? 1
+    }
+
+    /// 한 번 알아낸 크기 배율
+    private static var learnedScale: CGFloat?
+
+    private static func detectScale(for frames: [CGRect]) -> CGFloat? {
         let sorted = frames.sorted { $0.minX < $1.minX }
-        guard sorted.count >= 3 else { return 1 }
+        guard sorted.count >= 3 else { return nil }
         var pitches: [CGFloat] = []
         for (left, right) in zip(sorted, sorted.dropFirst()) {
             pitches.append(right.minX - left.minX)
@@ -174,7 +188,7 @@ enum SpacesBarAX {
         pitches.sort()
         let pitch = pitches[pitches.count / 2]
         let width = sorted[sorted.count / 2].width
-        guard pitch > 1, width > 0 else { return 1 }
+        guard pitch > 1, width > 0 else { return nil }
         let factor = (width / pitch).rounded()
         return factor >= 2 ? 1 / factor : 1
     }
@@ -210,8 +224,15 @@ enum SpacesBarAX {
     private(set) static var lastOpenSnapshot: String?
     private static var lastOpenButtonCount = 0
 
+    private static var previousSignature = ""
+
     private static func rememberWhileOpen(host: String, groups: [AXUIElement], buttons: [SpaceButton]) {
-        // 매번 트리를 훑으면 비싸다. 버튼 개수가 달라졌을 때만 다시 찍는다.
+        // 미션 컨트롤이 열리고 닫히는 동안의 중간 모습을 기억하면 값이 실제와 다르다.
+        // 두 번 연속 똑같이 보일 때만(= 움직임이 멈췄을 때) 기억한다.
+        let signature = buttons.map { "\(Int($0.frame.minX)),\(Int($0.frame.minY)),\(Int($0.frame.width))" }
+            .joined(separator: "|")
+        defer { previousSignature = signature }
+        guard signature == previousSignature else { return }
         guard lastOpenSnapshot == nil || buttons.count != lastOpenButtonCount else { return }
         lastOpenButtonCount = buttons.count
         var lines: [String] = ["\(host)에서 읽음, 공간 버튼 \(buttons.count)개"]
