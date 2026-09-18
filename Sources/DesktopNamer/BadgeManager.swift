@@ -141,9 +141,26 @@ final class BadgeManager {
     /// 둘 다 켜져 있으면 미션 컨트롤에 같은 이름이 두 번 보인다.
     var suppressed = false {
         didSet {
-            guard suppressed != oldValue, suppressed, isVisible else { return }
-            hide(reason: "공간 막대 덧그리기로 대체", force: true)
+            guard suppressed != oldValue else { return }
+            if suppressed {
+                // 쓰지 않는 창을 띄워 둘 이유가 없다. 데스크탑마다 하나씩이라 꽤 된다.
+                if isVisible { hide(reason: "공간 막대 덧그리기로 대체", force: true) }
+                discardBadges()
+                log("배지 정리 (공간 막대 덧그리기로 대체)")
+            } else if running, let active = spaces.activeSpace {
+                ensureBadge(for: active)
+            }
         }
+    }
+
+    /// 만들어 둔 배지 창을 모두 닫는다 (감시는 그대로 두어 다시 켤 수 있다)
+    private func discardBadges() {
+        badges.values.forEach { $0.forEach { $0.orderOut(nil) } }
+        badges.removeAll()
+        fields.removeAll()
+        alphas.removeAll()
+        missingOnce.removeAll()
+        removeMirrors()
     }
 
     func stop() {
@@ -333,7 +350,7 @@ final class BadgeManager {
     // MARK: - 배지 창
 
     private func ensureBadge(for space: Space) {
-        guard running, space.isActive, !space.isFullscreen else { return }
+        guard running, !suppressed, space.isActive, !space.isFullscreen else { return }
         if let existing = badges[space.uuid] {
             // 이 데스크탑이 지금 활성인데도 창이 어느 화면에도 붙어 있지 않다면,
             // 창이 데스크탑 소속을 잃은 것이다. 이 경우 스스로 다시 만든다.
@@ -510,6 +527,10 @@ final class BadgeManager {
     /// 전환은 ⌃숫자 단축키로 하므로, 그 단축키가 꺼져 있으면 실패한다. 실패를 감지해 알려 준다.
     func prepareAllBadges(completion: @escaping (String) -> Void) {
         guard running else { completion("이름 표시가 꺼져 있습니다. 먼저 켜 주세요."); return }
+        guard !suppressed else {
+            completion("이 맥에서는 미션 컨트롤 위에 이름을 직접 그릴 수 있어, 데스크탑을 돌며 준비할 필요가 없습니다.")
+            return
+        }
         let missing = spaces.spaces.filter { !$0.isFullscreen && badges[$0.uuid] == nil }
         guard !missing.isEmpty else { completion("모든 데스크탑에 이름이 준비되어 있습니다."); return }
 

@@ -198,7 +198,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showDiagnostics() {
         var text = badges?.diagnostics() ?? ""
         text += "\n\n\(barOverlay?.diagnostics ?? "공간 막대 덧그리기: 없음")"
-        text += "\n\n공간 막대 접근성 트리:\n" + SpacesBarAX.treeDump()
+        if let snapshot = SpacesBarAX.lastOpenSnapshot {
+            text += "\n\n공간 막대 (Mission Control이 열렸을 때 본 모습):\n" + snapshot
+        } else {
+            text += "\n\n공간 막대: 아직 열린 상태를 본 적이 없습니다."
+                + "\n미션 컨트롤을 한 번 연 뒤 다시 진단해 주세요."
+                + "\n지금 트리:\n" + SpacesBarAX.treeDump(maxLines: 30)
+        }
         text += "\n\n업데이트: \(updateChecker.note)"
         text += "\n\nMission Control 동작 감지\n  \(signals.note)\n  마지막 여는 동작: \(signals.lastOpenNote)"
         let alert = NSAlert()

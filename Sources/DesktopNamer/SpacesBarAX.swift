@@ -118,6 +118,7 @@ enum SpacesBarAX {
             }
             if !buttons.isEmpty {
                 lastGoodHost = host.bundleID
+                rememberWhileOpen(host: host.name, groups: groups, buttons: buttons)
                 return Scan(buttons: buttons, source: host.name, note: "공간 버튼 \(buttons.count)개")
             }
             notes.append("\(host.name)의 mc 그룹에서 공간 버튼을 찾지 못함")
@@ -149,7 +150,31 @@ enum SpacesBarAX {
 
     // MARK: - 진단
 
-    /// 두 프로세스의 트리를 그대로 찍어 준다. 구조가 또 바뀌면 이걸 보고 맞춘다.
+    /// Mission Control이 열려 있을 때 본 마지막 모습.
+    ///
+    /// mc 그룹은 열려 있는 동안에만 존재한다. 그래서 메뉴에서 진단을 열면(= 닫힌 상태)
+    /// 트리가 늘 비어 있어 아무것도 확인할 수 없었다. 열렸을 때 한 번 찍어 둔다.
+    private(set) static var lastOpenSnapshot: String?
+    private static var lastOpenButtonCount = 0
+
+    private static func rememberWhileOpen(host: String, groups: [AXUIElement], buttons: [SpaceButton]) {
+        // 매번 트리를 훑으면 비싸다. 버튼 개수가 달라졌을 때만 다시 찍는다.
+        guard lastOpenSnapshot == nil || buttons.count != lastOpenButtonCount else { return }
+        lastOpenButtonCount = buttons.count
+        var lines: [String] = ["\(host)에서 읽음, 공간 버튼 \(buttons.count)개"]
+        for button in buttons {
+            let f = button.frame
+            lines.append("  \"\(button.label)\" 번호 \(button.number.map(String.init) ?? "-")"
+                + " 버튼영역 (\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))")
+        }
+        lines.append("트리:")
+        for group in groups {
+            dump(group, depth: 1, maxDepth: 5, limit: 60, into: &lines)
+        }
+        lastOpenSnapshot = lines.prefix(60).joined(separator: "\n")
+    }
+
+    /// 두 프로세스의 트리를 지금 그대로 찍어 준다. 구조가 또 바뀌면 이걸 보고 맞춘다.
     static func treeDump(maxLines: Int = 80) -> String {
         guard AXIsProcessTrusted() else { return "접근성 권한이 없어 트리를 읽을 수 없습니다." }
         var lines: [String] = []
