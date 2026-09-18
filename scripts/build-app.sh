@@ -9,6 +9,16 @@ CONFIG="${1:-release}"
 OUT_DIR="build"
 APP="$OUT_DIR/$APP_NAME.app"
 
+# 예전 버전에서 남았을 수 있는 소스 정리.
+# 업데이트가 파일을 덮어쓰기만 하던 시절에 지워진 파일이 남아 함께 컴파일되면 빌드가 깨진다.
+# (update-build.sh는 이제 rsync --delete로 맞추므로, 이 목록은 더 늘어나지 않는다)
+for stale in MissionControlOverlay.swift ScreenText.swift; do
+  if [ -f "Sources/DesktopNamer/$stale" ]; then
+    rm -f "Sources/DesktopNamer/$stale"
+    echo "예전 파일 정리: $stale"
+  fi
+done
+
 swift build -c "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
 

@@ -94,14 +94,15 @@ final class MissionControlProbe {
 
     private var quiet: [[Int]] = Array(repeating: [], count: metricNames.count)
     private var open: [[Int]] = Array(repeating: [], count: metricNames.count)
-    private var last: [Int] = Array(repeating: 0, count: metricNames.count)
+    /// 가장 최근에 잰 지표 값들
+    private var lastValues: [Int] = Array(repeating: 0, count: metricNames.count)
 
     private static let quietWindow = 60
     private static let openWindow = 20
 
     func noteQuiet() {
         let values = Self.sample()
-        last = values
+        lastValues = values
         for index in values.indices {
             quiet[index].append(values[index])
             if quiet[index].count > Self.quietWindow {
@@ -112,7 +113,7 @@ final class MissionControlProbe {
 
     func noteOpen() {
         let values = Self.sample()
-        last = values
+        lastValues = values
         for index in values.indices {
             open[index].append(values[index])
             if open[index].count > Self.openWindow {
@@ -187,7 +188,7 @@ final class MissionControlProbe {
         if notificationsWork { return openByNotification }
         guard let choice else { return nil }
         let values = Self.sample()
-        last = values
+        lastValues = values
         let value = values[choice.index]
         return choice.openIsHigher ? value >= choice.threshold : value <= choice.threshold
     }
@@ -204,11 +205,11 @@ final class MissionControlProbe {
     var note: String {
         var lines: [String] = []
         lines.append("WindowServer 알림 등록: \(registerNote)")
-        let last = lastNotification.map(String.init) ?? "없음"
+        let lastEvent = lastNotification.map(String.init) ?? "없음"
         if notificationsWork {
-            lines.append("알림 \(notificationCount)회 수신 (마지막 \(last)) → 이 신호만 사용, 지금 \(openByNotification ? "열림" : "닫힘")")
+            lines.append("알림 \(notificationCount)회 수신 (마지막 \(lastEvent)) → 이 신호만 사용, 지금 \(openByNotification ? "열림" : "닫힘")")
         } else {
-            lines.append("열림 알림 없음 (수신 \(notificationCount)회, 마지막 \(last)) → 화면 지표로 판단")
+            lines.append("열림 알림 없음 (수신 \(notificationCount)회, 마지막 \(lastEvent)) → 화면 지표로 판단")
         }
         let picked = choice
         if let picked {
@@ -224,7 +225,7 @@ final class MissionControlProbe {
             let high = Self.percentile(quiet[index], 0.9).map(String.init) ?? "-"
             let openMedian = Self.percentile(open[index], 0.5).map(String.init) ?? "-"
             let mark = picked?.index == index ? " ←" : ""
-            lines.append("  \(Self.metricNames[index]): \(last[index]) / \(low)~\(high) / \(openMedian)\(mark)")
+            lines.append("  \(Self.metricNames[index]): \(lastValues[index]) / \(low)~\(high) / \(openMedian)\(mark)")
         }
         return lines.joined(separator: "\n  ")
     }

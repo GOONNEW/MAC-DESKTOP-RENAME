@@ -124,11 +124,12 @@ final class ShinyMenuItemView: NSView {
         // 띠가 화면 밖에서 시작해 밖으로 빠져나가게 한다
         let centerX = rect.minX - bandWidth + (rect.width + bandWidth * 2) * progress
 
+        let stops: [CGFloat] = [0, 0.5, 1]
         guard let gradient = NSGradient(colors: [
             NSColor.white.withAlphaComponent(0),
             NSColor.white.withAlphaComponent(hovering ? 0.55 : 0.4),
             NSColor.white.withAlphaComponent(0),
-        ], atLocations: [0, 0.5, 1], colorSpace: .deviceRGB) else { return }
+        ], atLocations: stops, colorSpace: .deviceRGB) else { return }
 
         // 살짝 기울여 유리에 빛이 스치는 느낌을 준다
         let band = NSRect(x: centerX - bandWidth / 2, y: rect.minY - 6,

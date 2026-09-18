@@ -16,8 +16,11 @@ unzip -qo "$TMP/src.zip" -d "$TMP/src"
 SRC="$(find "$TMP/src" -mindepth 1 -maxdepth 1 -type d | head -1)"
 
 mkdir -p Sources scripts
-cp -R "$SRC/Sources/." Sources/
-cp -R "$SRC/scripts/." scripts/
+# --delete로 맞춰야 위쪽에서 삭제한 파일이 내 폴더에서도 사라진다.
+# 그냥 덮어쓰기만 하면 지워진 파일이 남아 계속 함께 컴파일되고, 결국 빌드가 깨진다.
+rsync -a --delete "$SRC/Sources/" Sources/
+# scripts는 지금 실행 중인 파일이 들어 있으므로 --delete를 쓰지 않는다
+rsync -a "$SRC/scripts/" scripts/
 cp "$SRC/Package.swift" "$SRC/README.md" .
 chmod +x scripts/*.sh
 
