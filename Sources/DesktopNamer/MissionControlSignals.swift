@@ -83,14 +83,29 @@ final class MissionControlSignals {
 
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            // 데스크탑이 바뀌었다는 건 Mission Control에서 하나를 골랐거나 직접 전환한 것이다
-            // 미션 컨트롤에서 데스크탑을 골랐거나 직접 전환한 것이다. 확실한 닫힘이다.
-            self?.close("데스크탑 전환", strong: true, blockReopen: 1.2)
+            guard let self else { return }
+            // 데스크탑이 바뀌었다는 건 보통 Mission Control에서 하나를 골랐거나 직접 전환한 것이다.
+            //
+            // 그런데 Mission Control을 "여는 것" 자체도 데스크탑 전환으로 보고된다.
+            // macOS가 잠깐 전용 공간으로 옮겨가기 때문이다. 그래서 이름표를 띄운 지
+            // 0.1초 만에 이 신호가 와서 도로 꺼버리는 일이 있었다.
+            // 접근성 트리가 "아직 열려 있다"고 하면 전환이 아니라 열림이므로 미룬다.
+            if SpacesBarAX.isOpen() == true {
+                // 정말 골라서 닫힌 것이라면 잠시 뒤엔 닫혀 있을 것이다
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self, SpacesBarAX.isOpen() == false else { return }
+                    self.close("데스크탑 전환", strong: true, blockReopen: 1.2)
+                }
+                return
+            }
+            self.close("데스크탑 전환", strong: true, blockReopen: 1.2)
         })
         observers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            // Mission Control이 떠 있는 동안에는 Dock이 활성 앱이 되므로 Dock은 제외한다
-            if app?.bundleIdentifier != "com.apple.dock" { self?.close("앱 전환") }
+            // Mission Control이 떠 있는 동안 활성 앱이 되는 것들은 제외한다.
+            // macOS 26까지는 Dock이었지만, 27부터는 WindowManager가 맡는다.
+            guard let id = app?.bundleIdentifier, !Self.missionControlOwners.contains(id) else { return }
+            self?.close("앱 전환")
         })
 
         let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
@@ -258,6 +273,13 @@ final class MissionControlSignals {
 
     /// 실제로 닫혔음이 확인된 경우에만 즉시 닫는다.
     /// 열림 여부를 모르는 상태(nil)에서는 아무것도 하지 않아, 예전 동작을 그대로 남긴다.
+    /// Mission Control이 열려 있는 동안 활성 앱이 되는 프로세스들
+    private static let missionControlOwners: Set<String> = [
+        "com.apple.dock",
+        "com.apple.WindowManager",
+        "com.apple.exposelauncher",
+    ]
+
     private func closeIfConfirmed(_ reason: String) {
         guard missionControlIsOpen() == false else { return }
         close(reason, strong: true, blockReopen: 0.4)
