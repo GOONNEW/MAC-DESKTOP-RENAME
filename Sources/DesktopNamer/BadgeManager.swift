@@ -228,14 +228,20 @@ final class BadgeManager {
     /// 다른 데스크탑은 화면이 통째로 축소돼 썸네일이 되므로 아무 설정도 필요 없다.
     /// 지금 보고 있는 데스크탑만은 창들이 하나씩 위로 날아올라 썸네일을 이룬다.
     /// 그 무리에 끼려면 평범한 창이어야 한다. 세 가지가 모두 막고 있었다.
-    ///   .stationary      — "미션 컨트롤의 영향을 받지 않는다" (창 만들 때부터 뺐다)
+    ///   .stationary      — "미션 컨트롤의 영향을 받지 않는다" (이때만 뗀다)
     ///   isFloatingPanel  — 떠 있는 패널은 화면에 남는다
     ///   level = .floating — 떠 있는 높이의 창도 화면에 남는다
     /// 미션 컨트롤이 닫히면 원래대로 되돌린다. 평소에는 다른 창 위에 있어야
     /// 다른 데스크탑 썸네일에서 창에 가리지 않는다.
+    /// 평소 모습: 다른 창 위에 떠 있고, 미션 컨트롤이 데스크탑을 통째로 축소할 때 같이 담긴다.
+    private static let restingBehavior: NSWindow.CollectionBehavior = [.stationary, .ignoresCycle]
+    /// 날아오를 때 모습: 평범한 창처럼 굴어야 다른 창들과 같이 썸네일로 빨려 들어간다.
+    private static let flyingBehavior: NSWindow.CollectionBehavior = [.ignoresCycle]
+
     private func joinMissionControl(_ uuid: String) {
         badges[uuid]?.forEach { panel in
             panel.isFloatingPanel = false
+            panel.collectionBehavior = Self.flyingBehavior
             panel.level = .normal
             panel.orderFrontRegardless()
         }
@@ -244,6 +250,7 @@ final class BadgeManager {
     private func leaveMissionControl(_ uuid: String) {
         badges[uuid]?.forEach { panel in
             panel.isFloatingPanel = true
+            panel.collectionBehavior = Self.restingBehavior
             panel.level = .floating
             panel.orderFrontRegardless()
         }
@@ -454,11 +461,13 @@ final class BadgeManager {
         panel.level = .floating
         // 이 데스크탑에만 속하게 한다. moveToActiveSpace/canJoinAllSpaces가 없어야 따라다니지 않는다.
         //
-        // .stationary는 넣지 않는다. 애플 문서에 "이 창은 Exposé(미션 컨트롤)의 영향을 받지
-        // 않고 바탕화면처럼 그 자리에 남는다"고 되어 있다. 지금 보고 있는 데스크탑에서는
-        // 창들이 위로 날아올라 썸네일이 되는데, 이 설정이 붙어 있으면 이름표만 날아오르지
-        // 않고 화면에 큰 글씨로 남는다. 그 칸만 이름이 비어 보이던 원인이다.
-        panel.collectionBehavior = [.ignoresCycle]
+        // .stationary가 기본값이어야 한다. 지금 보고 있지 않은 데스크탑들은 미션 컨트롤에서
+        // "그 데스크탑을 그대로 축소한 그림"으로 보여주는데, 이 설정이 있어야 이름표가
+        // 그 그림 안에 남는다. 빼면 배경 데스크탑 이름표가 전부 사라진다.
+        //
+        // 반대로 지금 보고 있는 데스크탑은 창들이 하나씩 위로 날아올라 썸네일이 되므로,
+        // 그때만 이 설정을 떼야 이름표도 같이 날아오른다. joinMissionControl 참고.
+        panel.collectionBehavior = Self.restingBehavior
         // 앱이 활성화될 때 창을 현재 데스크탑으로 끌어오지 않도록
         panel.isFloatingPanel = true
         panel.contentView = container
