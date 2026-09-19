@@ -106,7 +106,10 @@ final class BadgeManager {
             .compactMap { $0 }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] space in self?.ensureBadge(for: space) }
+            .sink { [weak self] space in
+                self?.ensureBadge(for: space)
+                self?.armActive()
+            }
             .store(in: &cancellables)
 
         // 이름이 바뀌면 글자를 갱신한다
@@ -123,7 +126,7 @@ final class BadgeManager {
             .sink { [weak self] uuids in self?.removeBadges(notIn: uuids) }
             .store(in: &cancellables)
 
-        if let active = spaces.activeSpace { ensureBadge(for: active) }
+        if let active = spaces.activeSpace { ensureBadge(for: active); armActive() }
 
         // 앱을 켤 때마다 배지를 다시 만들어야 하므로, 이름이 지정된 데스크탑이 있으면 자동으로 준비한다.
         // 데스크탑을 한 바퀴 도는 작업이라 화면이 잠깐 바뀐다.
@@ -150,6 +153,7 @@ final class BadgeManager {
         fields.removeAll()
         alphas.removeAll()
         namedCache.removeAll()
+        flyingUUID = nil
         reassertWork?.cancel()
         removeMirrors()
         isVisible = false
@@ -166,7 +170,7 @@ final class BadgeManager {
     func show(reason: String) {
         guard running, !isVisible else { return }
         preArmedUUID = nil
-        if let uuid = spaces.activeSpace?.uuid { joinMissionControl(uuid) }
+        armActive()
         hideTimer?.invalidate()
         // 지연 없이 즉시 띄운다. macOS는 Mission Control을 열 때 현재 데스크탑 화면을
         // 한 번 찍어 썸네일로 쓰는데, 그 순간보다 배지가 늦으면 썸네일에 찍히지 않는다.
@@ -219,7 +223,6 @@ final class BadgeManager {
             // 그 사이에 제대로 열렸으면 그대로 두고, 아니면 도로 감춘다
             guard !self.isVisible else { return }
             self.applyAlpha(0, to: armed)
-            self.leaveMissionControl(armed)
         }
     }
 
@@ -237,6 +240,22 @@ final class BadgeManager {
     private static let restingBehavior: NSWindow.CollectionBehavior = [.stationary, .ignoresCycle]
     /// 날아오를 때 모습: 평범한 창처럼 굴어야 다른 창들과 같이 썸네일로 빨려 들어간다.
     private static let flyingBehavior: NSWindow.CollectionBehavior = [.ignoresCycle]
+
+    /// 지금 "날아오를 준비"가 된 데스크탑
+    private var flyingUUID: String?
+
+    /// 지금 보고 있는 데스크탑의 이름표를 미리 날아오를 상태로 바꿔 둔다.
+    ///
+    /// 미션 컨트롤이 열리는 순간에 바꾸면 늦을 때가 있다. 제스처로 열면 낌새를 미리
+    /// 챌 수 있지만, 단축키나 핫코너로 열면 열린 걸 안 시점에 이미 애니메이션이
+    /// 시작된 뒤다. 그래서 그 칸만 이름이 비어 보였다.
+    /// 이름표는 평소 완전히 투명하므로, 미리 바꿔 둬도 화면에는 아무 변화가 없다.
+    private func armActive() {
+        guard running, let uuid = spaces.activeSpace?.uuid else { return }
+        if let old = flyingUUID, old != uuid { leaveMissionControl(old) }
+        flyingUUID = uuid
+        joinMissionControl(uuid)
+    }
 
     private func joinMissionControl(_ uuid: String) {
         badges[uuid]?.forEach { panel in
@@ -262,7 +281,7 @@ final class BadgeManager {
         if !force, let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
         setVisible(false)
-        badges.keys.forEach(leaveMissionControl)
+        badges.keys.forEach { if $0 != flyingUUID { leaveMissionControl($0) } }
         shownAt = nil
         log("숨김 (\(reason))")
     }
@@ -497,11 +516,15 @@ final class BadgeManager {
     /// 배지 하나를 화면 구석에 맞춰 놓는다
     private func layoutPanel(_ panel: NSPanel, field: NSTextField, on screen: NSScreen) {
         var pointSize = (screen.frame.height * size.ratio).rounded()
-        let maxWidth = screen.frame.width * 0.8
+        // 이름표가 차지해도 되는 최대 가로폭.
+        // 화면에서는 넉넉해 보여도 미션 컨트롤 썸네일은 화면을 1/10로 줄인 그림이라,
+        // 여기서 폭을 크게 허용하면 긴 이름이 썸네일을 가로로 거의 다 덮어버린다.
+        // 폭을 좁게 잡으면 아래 반복문이 글자를 줄여 짧은 이름과 비슷한 크기가 된다.
+        let maxWidth = screen.frame.width * 0.42
         let paddingX = (pointSize * 0.4).rounded()
         let paddingY = (pointSize * 0.22).rounded()
         // 이름이 길면 화면에 들어갈 때까지 글자를 줄인다
-        while pointSize > 18 {
+        while pointSize > 26 {
             field.font = .systemFont(ofSize: pointSize, weight: .heavy)
             field.sizeToFit()
             if field.frame.width + paddingX * 2 <= maxWidth { break }
