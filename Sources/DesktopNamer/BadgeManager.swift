@@ -164,6 +164,7 @@ final class BadgeManager {
         hideTimer?.invalidate()
         // 지연 없이 즉시 띄운다. macOS는 Mission Control을 열 때 현재 데스크탑 화면을
         // 한 번 찍어 썸네일로 쓰는데, 그 순간보다 배지가 늦으면 썸네일에 찍히지 않는다.
+        if let uuid = spaces.activeSpace?.uuid { lowerToNormalLevel(uuid) }
         setVisible(true)
         shownAt = Date()
         log("표시 (\(reason))")
@@ -205,6 +206,7 @@ final class BadgeManager {
         guard running, !isVisible, preArmedUUID == nil else { return }
         guard let uuid = spaces.activeSpace?.uuid, hasName(uuid) else { return }
         preArmedUUID = uuid
+        lowerToNormalLevel(uuid)
         applyAlpha(1, to: uuid)
         DispatchQueue.main.asyncAfter(deadline: .now() + preArmTimeout) { [weak self] in
             guard let self, let armed = self.preArmedUUID else { return }
@@ -212,6 +214,29 @@ final class BadgeManager {
             // 그 사이에 제대로 열렸으면 그대로 두고, 아니면 도로 감춘다
             guard !self.isVisible else { return }
             self.applyAlpha(0, to: armed)
+            self.restoreFloatingLevel(armed)
+        }
+    }
+
+    /// 지금 보고 있는 데스크탑의 이름표만 일반 창 높이로 내린다.
+    ///
+    /// 이름표 창은 평소 "떠 있는 창"(floating) 높이에 둔다. 다른 데스크탑에서는 그 데스크탑
+    /// 화면에 같이 그려져 썸네일에 잘 담긴다. 그런데 지금 보고 있는 데스크탑에서는 다르다.
+    /// Mission Control이 열리면 그 데스크탑의 창들이 위로 날아올라 썸네일이 되는데,
+    /// 떠 있는 창은 그 무리에 끼지 않고 화면에 그대로 남는다. 실제로 이름표가 줄어들지 않고
+    /// 큰 글씨로 화면에 남아 있었다. 그래서 그 칸만 이름이 비어 보인다.
+    /// 일반 창 높이로 내리면 다른 창들과 함께 날아올라 썸네일에 담긴다.
+    private func lowerToNormalLevel(_ uuid: String) {
+        badges[uuid]?.forEach { panel in
+            panel.level = .normal
+            panel.orderFrontRegardless()
+        }
+    }
+
+    private func restoreFloatingLevel(_ uuid: String) {
+        badges[uuid]?.forEach { panel in
+            panel.level = .floating
+            panel.orderFrontRegardless()
         }
     }
 
@@ -225,6 +250,7 @@ final class BadgeManager {
         if !force, let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
         setVisible(false)
+        badges.keys.forEach(restoreFloatingLevel)
         shownAt = nil
         log("숨김 (\(reason))")
     }
