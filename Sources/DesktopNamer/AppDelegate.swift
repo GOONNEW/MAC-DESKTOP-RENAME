@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.barOverlay?.hide()
         }
         signals.onStillOpen = { [weak self] in self?.badges?.keepAlive() }
+        signals.onSwipeStarting = { [weak self] in self?.badges?.preArm() }
         signals.onTick = { [weak self] in self?.barOverlay?.update() }
         signals.start()
         statusBar = StatusBarController(

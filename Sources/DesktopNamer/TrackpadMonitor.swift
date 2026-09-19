@@ -18,6 +18,17 @@ final class TrackpadMonitor {
     static var onSwipeUp: ((Int) -> Void)?
     /// 세 손가락 이상으로 아래로 쓸었을 때 (Mission Control 닫기)
     static var onSwipeDown: ((Int) -> Void)?
+    /// 위로 쓸기가 "시작될 것 같을 때" 한 번 호출된다.
+    ///
+    /// macOS는 Mission Control을 열면서 지금 화면을 한 장 찍어 현재 데스크탑 썸네일로 쓴다.
+    /// 그 사진은 쓸기가 끝나기 전에 찍히므로, 제대로 된 제스처를 확인하고 나서 이름표를
+    /// 띄우면 이미 늦다. 그래서 훨씬 작은 움직임만으로 미리 알려, 이름표를 먼저 띄우게 한다.
+    static var onSwipeStarting: (() -> Void)?
+
+    /// 미리 알림을 보낼 최소 이동량. 인정 기준(0.02)의 절반보다 작게 잡아 더 일찍 알리되,
+    /// 손가락을 얹고 살짝 움직인 정도로는 반응하지 않도록 0은 아니게 둔다.
+    private static let earlyRise: Float = 0.008
+    private static var earlyFired = false
 
     /// 시험해 볼 (구조체 크기, y 위치) 후보들
     private static let candidates: [(stride: Int, yOffset: Int)] = {
@@ -44,6 +55,7 @@ final class TrackpadMonitor {
     private static func resetGesture() {
         startPositions.removeAll()
         fired = false
+        earlyFired = false
     }
     /// 위로 쓸기로 인정할 최소 이동량 (0~1 정규화 좌표)
     private static let minimumRise: Float = 0.02
@@ -233,15 +245,24 @@ final class TrackpadMonitor {
         // 이름표가 번쩍이는 문제가 있었다.
         var risen = 0
         var fallen = 0
+        var earlyRisen = 0
         var biggest: Float = 0
         for finger in fingers {
             guard let origin = startPositions[finger.id] else { continue }
             let delta = finger.y - origin
             if abs(delta) > abs(biggest) { biggest = delta }
             if delta >= minimumRise { risen += 1 }
+            if delta >= earlyRise { earlyRisen += 1 }
             if delta <= -minimumRise { fallen += 1 }
         }
         lastRise = biggest
+
+        // 아직 제스처로 인정하기 전이라도, 세 손가락이 함께 위로 움직이기 시작했으면
+        // 미리 알린다. 현재 데스크탑 썸네일이 찍히기 전에 이름표를 띄우기 위함이다.
+        if !earlyFired, !fired, earlyRisen >= 3 {
+            earlyFired = true
+            DispatchQueue.main.async { onSwipeStarting?() }
+        }
 
         guard !fired else { return 0 }
         guard risen >= 3 || fallen >= 3 else { return 0 }

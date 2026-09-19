@@ -160,6 +160,7 @@ final class BadgeManager {
     /// Mission Control이 열릴 것 같을 때: 잠깐 뒤(애니메이션이 시작될 즈음) 배지를 보이게 한다.
     func show(reason: String) {
         guard running, !isVisible else { return }
+        preArmedUUID = nil
         hideTimer?.invalidate()
         // 지연 없이 즉시 띄운다. macOS는 Mission Control을 열 때 현재 데스크탑 화면을
         // 한 번 찍어 썸네일로 쓰는데, 그 순간보다 배지가 늦으면 썸네일에 찍히지 않는다.
@@ -194,6 +195,30 @@ final class BadgeManager {
     }
 
     /// - Parameter force: true면 막 띄운 직후여도 즉시 숨긴다 (닫힘이 확실할 때)
+    /// 쓸기가 시작될 것 같을 때: 지금 보고 있는 데스크탑의 이름표만 미리 띄운다.
+    ///
+    /// macOS는 Mission Control을 열면서 지금 화면을 한 장 찍어 현재 데스크탑 썸네일로 쓴다.
+    /// 그 사진이 찍히는 순간보다 이름표가 늦으면 그 칸만 이름이 비어 보인다.
+    /// 다른 데스크탑 썸네일은 실시간으로 그려져 이런 문제가 없다.
+    /// 진짜 제스처가 아니었다면 잠시 뒤 스스로 되돌린다.
+    func preArm() {
+        guard running, !isVisible, preArmedUUID == nil else { return }
+        guard let uuid = spaces.activeSpace?.uuid, hasName(uuid) else { return }
+        preArmedUUID = uuid
+        applyAlpha(1, to: uuid)
+        DispatchQueue.main.asyncAfter(deadline: .now() + preArmTimeout) { [weak self] in
+            guard let self, let armed = self.preArmedUUID else { return }
+            self.preArmedUUID = nil
+            // 그 사이에 제대로 열렸으면 그대로 두고, 아니면 도로 감춘다
+            guard !self.isVisible else { return }
+            self.applyAlpha(0, to: armed)
+        }
+    }
+
+    private var preArmedUUID: String?
+    /// 미리 띄운 이름표를 되돌리기까지의 시간
+    private let preArmTimeout: TimeInterval = 0.45
+
     func hide(reason: String, force: Bool = false) {
         guard isVisible else { return }
         // 막 보이기 시작한 직후(여는 제스처의 잔여 이벤트)는 무시한다

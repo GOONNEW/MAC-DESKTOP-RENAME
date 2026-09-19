@@ -18,6 +18,8 @@ final class MissionControlSignals {
     var onStillOpen: (() -> Void)?
     /// 열려 있는 동안 자주 호출된다 (공간 막대 위 이름표 위치를 맞추기 위함)
     var onTick: (() -> Void)?
+    /// 쓸기가 시작될 것 같을 때 (현재 데스크탑 이름표를 미리 띄우기 위함)
+    var onSwipeStarting: (() -> Void)?
 
     /// 지금 이름이 보이는 중인지. 보이는 중에 들어온 여는 동작은 "닫기"로 해석한다.
     var isShowing: (() -> Bool)?
@@ -66,6 +68,7 @@ final class MissionControlSignals {
         TrackpadMonitor.onSwipeUp = { [weak self] count in
             self?.open("트랙패드 \(count)손가락 위로 쓸기")
         }
+        TrackpadMonitor.onSwipeStarting = { [weak self] in self?.onSwipeStarting?() }
         TrackpadMonitor.onSwipeDown = { [weak self] count in
             self?.close("트랙패드 \(count)손가락 아래로 쓸기", strong: true)
         }
@@ -118,6 +121,7 @@ final class MissionControlSignals {
     func stop() {
         isRunning = false
         SkyLight.onMissionControlEvent = nil
+        TrackpadMonitor.onSwipeStarting = nil
         trackpad.stopMonitoring()
         keyboard.stop()
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
