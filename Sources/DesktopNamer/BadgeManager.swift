@@ -154,6 +154,8 @@ final class BadgeManager {
         alphas.removeAll()
         namedCache.removeAll()
         flyingUUID = nil
+        missingRecheck?.cancel()
+        missingOnce.removeAll()
         reassertWork?.cancel()
         removeMirrors()
         isVisible = false
@@ -282,6 +284,8 @@ final class BadgeManager {
         hideTimer?.invalidate()
         setVisible(false)
         badges.keys.forEach { if $0 != flyingUUID { leaveMissionControl($0) } }
+        // 데스크탑은 대개 Mission Control 안에서 지운다. 닫히자마자 목록을 맞춰 본다.
+        scheduleMissingRecheck()
         shownAt = nil
         log("숨김 (\(reason))")
     }
@@ -573,7 +577,8 @@ final class BadgeManager {
     /// 그 데스크탑 배지는 직접 방문할 때까지 영영 돌아오지 않는다. 그래서
     /// 두 번 연속 빠졌을 때만 닫고, Mission Control이 떠 있는 동안은 건드리지 않는다.
     private func removeBadges(notIn uuids: Set<String>) {
-        guard !isVisible else { return }
+        // Mission Control이 떠 있는 동안에는 건드리지 않는다. 닫힌 뒤 다시 본다.
+        guard !isVisible else { scheduleMissingRecheck(); return }
         let missing = Set(badges.keys).subtracting(uuids)
         let confirmed = missing.intersection(missingOnce)
         missingOnce = missing.subtracting(confirmed)
@@ -586,10 +591,27 @@ final class BadgeManager {
             let name = spaces.spaces.first(where: { $0.uuid == uuid })?.defaultName ?? uuid
             log("배지 닫음: \(name) (목록에서 사라짐)")
         }
+        // 아직 한 번밖에 못 본 게 남아 있으면 잠시 뒤 스스로 한 번 더 본다.
+        //
+        // 이 함수는 데스크탑 목록이 "바뀔 때만" 불린다. 그래서 데스크탑을 하나 지우면
+        // 한 번만 불리고, 두 번째 확인이 영영 오지 않아 이름표가 그대로 남았다.
+        if !missingOnce.isEmpty { scheduleMissingRecheck() }
+    }
+
+    /// 잠시 뒤 사라진 데스크탑을 한 번 더 확인한다
+    private func scheduleMissingRecheck() {
+        missingRecheck?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.running else { return }
+            self.removeBadges(notIn: Set(self.spaces.spaces.map(\.uuid)))
+        }
+        missingRecheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
     }
 
     /// 한 번 목록에서 빠졌지만 아직 닫지 않은 데스크탑
     private var missingOnce: Set<String> = []
+    private var missingRecheck: DispatchWorkItem?
 
     // MARK: - 모든 데스크탑 준비
 
