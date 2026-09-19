@@ -135,37 +135,20 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let displayMenu = NSMenu()
         displayMenu.autoenablesItems = false
 
-        // 미션 컨트롤 위에 직접 그릴 수 있으면 준비할 것이 없다. 눌러도 하는 일이 없는
-        // 항목은 두지 않는다. 그 방식이 안 되는 맥에서만 보인다.
-        if !settings.spacesBarOverlayWorks {
-            let sync = NSMenuItem(title: "데스크탑 이름 동기화…", action: #selector(syncBadges(_:)), keyEquivalent: "")
-            sync.target = self
-            displayMenu.addItem(sync)
-            displayMenu.addItem(.separator())
-        }
+        let sync = NSMenuItem(title: "데스크탑 이름 동기화…", action: #selector(syncBadges(_:)), keyEquivalent: "")
+        sync.target = self
+        displayMenu.addItem(sync)
+        displayMenu.addItem(.separator())
 
         let cornerItem = NSMenuItem(title: "위치", action: nil, keyEquivalent: "")
         let cornerMenu = NSMenu()
         cornerMenu.autoenablesItems = false
-        // 미션 컨트롤 위에 직접 그릴 때는 가로를 썸네일 가운데로 고정하고, 세로만 고른다.
-        // (버튼 영역이 실제 썸네일보다 넓어 한쪽에 붙이면 옆 썸네일로 밀려나고,
-        //  접근성이 썸네일 그림만의 자리를 알려주지 않아 세로는 눈으로 맞추는 편이 확실하다)
-        if settings.spacesBarOverlayWorks {
-            for (index, title) in SpacesBarOverlay.stepTitles.enumerated() {
-                let item = NSMenuItem(title: title, action: #selector(setOverlayStep(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = index
-                item.state = settings.spacesBarOverlayStep == index ? .on : .off
-                cornerMenu.addItem(item)
-            }
-        } else {
-            for value in BadgeManager.Corner.allCases {
-                let item = NSMenuItem(title: value.title, action: #selector(setCorner(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = value.rawValue
-                item.state = settings.badgeCorner == value ? .on : .off
-                cornerMenu.addItem(item)
-            }
+        for value in BadgeManager.Corner.allCases {
+            let item = NSMenuItem(title: value.title, action: #selector(setCorner(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = value.rawValue
+            item.state = settings.badgeCorner == value ? .on : .off
+            cornerMenu.addItem(item)
         }
         cornerItem.submenu = cornerMenu
         displayMenu.addItem(cornerItem)
@@ -183,11 +166,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         sizeItem.submenu = sizeMenu
         displayMenu.addItem(sizeItem)
 
-        // 아래 항목들은 데스크탑 안쪽에 이름표 창을 두는 예전 방식에만 해당한다.
-        // 미션 컨트롤 위에 직접 그리는 맥에서는 뜻이 없으므로 보이지 않는다.
-        let usesBadges = !settings.spacesBarOverlayWorks
-
-        if usesBadges, NSScreen.screens.count > 1 {
+        if NSScreen.screens.count > 1 {
             let mainOnly = NSMenuItem(title: "주 화면에만 표시", action: #selector(toggleMainScreenOnly(_:)), keyEquivalent: "")
             mainOnly.target = self
             mainOnly.state = settings.badgeMainScreenOnly ? .on : .off
@@ -200,18 +179,38 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             displayMenu.addItem(mirror)
         }
 
-        if usesBadges {
-            displayMenu.addItem(.separator())
+        displayMenu.addItem(.separator())
 
-            let preview = NSMenuItem(title: "지금 이름 보기 (5초)", action: #selector(previewBadges(_:)), keyEquivalent: "")
-            preview.target = self
-            displayMenu.addItem(preview)
-
-            let auto = NSMenuItem(title: "앱 시작 시 자동 준비", action: #selector(toggleAutoPrepare(_:)), keyEquivalent: "")
-            auto.target = self
-            auto.state = settings.badgeAutoPrepare ? .on : .off
-            displayMenu.addItem(auto)
+        // 지금 보고 있는 데스크탑의 썸네일만은 미션 컨트롤이 열리기 직전에 찍은 사진이라
+        // 안쪽에 둔 이름표가 담기지 않는다. 그 한 칸만 위에 덧그린다.
+        // 자리가 맘에 안 들면 단계를 바꾸거나 끌 수 있다.
+        let currentItem = NSMenuItem(title: "현재 데스크탑 이름 덧그리기", action: nil, keyEquivalent: "")
+        let currentMenu = NSMenu()
+        currentMenu.autoenablesItems = false
+        let offItem = NSMenuItem(title: "끔", action: #selector(setOverlayStep(_:)), keyEquivalent: "")
+        offItem.target = self
+        offItem.representedObject = -1
+        offItem.state = settings.spacesBarOverlayStep < 0 ? .on : .off
+        currentMenu.addItem(offItem)
+        currentMenu.addItem(.separator())
+        for (index, title) in SpacesBarOverlay.stepTitles.enumerated() {
+            let item = NSMenuItem(title: title, action: #selector(setOverlayStep(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = index
+            item.state = settings.spacesBarOverlayStep == index ? .on : .off
+            currentMenu.addItem(item)
         }
+        currentItem.submenu = currentMenu
+        displayMenu.addItem(currentItem)
+
+        let preview = NSMenuItem(title: "지금 이름 보기 (5초)", action: #selector(previewBadges(_:)), keyEquivalent: "")
+        preview.target = self
+        displayMenu.addItem(preview)
+
+        let auto = NSMenuItem(title: "앱 시작 시 자동 준비", action: #selector(toggleAutoPrepare(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.state = settings.badgeAutoPrepare ? .on : .off
+        displayMenu.addItem(auto)
 
         display.submenu = displayMenu
         menu.addItem(display)

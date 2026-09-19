@@ -9,7 +9,6 @@ final class AppSettings: ObservableObject {
     private static let badgeMainOnlyKey = "badgeMainScreenOnly"
     private static let badgeMirrorKey = "badgeMirrorToOtherScreens"
     private static let badgeAutoPrepareKey = "badgeAutoPrepare"
-    private static let overlayWorksKey = "spacesBarOverlayWorks"
     private static let overlayStepKey = "spacesBarOverlayStep"
 
     /// 데스크탑마다 이름 배지 창을 두고 Mission Control이 열릴 때만 보이게 한다 (기본 방식)
@@ -38,15 +37,6 @@ final class AppSettings: ObservableObject {
     /// 앱을 켤 때 모든 데스크탑에 이름을 자동으로 준비한다
     @Published var badgeAutoPrepare: Bool {
         didSet { UserDefaults.standard.set(badgeAutoPrepare, forKey: Self.badgeAutoPrepareKey) }
-    }
-
-    /// 공간 막대 위에 이름을 덧그리는 방식이 이 맥에서 동작한 적이 있는가.
-    ///
-    /// 기억해 두면 다음에 켤 때부터 예전 배지를 아예 만들지 않는다.
-    /// 배지를 준비하려면 데스크탑을 한 바퀴 돌아야 해서 화면이 어지럽게 바뀌는데,
-    /// 덧그리기가 되면 그럴 필요가 없다.
-    @Published var spacesBarOverlayWorks: Bool {
-        didSet { UserDefaults.standard.set(spacesBarOverlayWorks, forKey: Self.overlayWorksKey) }
     }
 
     /// 미션 컨트롤 썸네일 안에서 이름표를 놓을 세로 단계 (0 = 맨 위 … 4 = 맨 아래)
@@ -87,7 +77,6 @@ final class AppSettings: ObservableObject {
         badgeMainScreenOnly = UserDefaults.standard.object(forKey: Self.badgeMainOnlyKey) as? Bool ?? true
         badgeMirrorToOtherScreens = UserDefaults.standard.bool(forKey: Self.badgeMirrorKey)
         badgeAutoPrepare = UserDefaults.standard.object(forKey: Self.badgeAutoPrepareKey) as? Bool ?? true
-        spacesBarOverlayWorks = UserDefaults.standard.bool(forKey: Self.overlayWorksKey)
         spacesBarOverlayStep = UserDefaults.standard.object(forKey: Self.overlayStepKey) as? Int ?? 1
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }

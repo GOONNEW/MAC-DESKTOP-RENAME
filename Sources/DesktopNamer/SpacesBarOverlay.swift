@@ -34,11 +34,6 @@ final class SpacesBarOverlay {
     /// 한 번이라도 이름표를 제대로 올린 적이 있는가.
     /// 이게 true면 데스크탑 안쪽에 두는 예전 배지는 필요 없다.
     private(set) var everWorked = false
-    /// 이름표를 올릴 때마다 호출된다 (예전 배지를 끄기 위함)
-    var onPlaced: (() -> Void)?
-    /// 더 이상 올릴 수 없게 되었을 때 한 번 호출된다 (예전 배지로 되돌리기 위함)
-    var onFellBack: (() -> Void)?
-
     /// 열린 것 같은데 이름표를 올리지 못한 횟수
     private var misses = 0
     private var fellBack = false
@@ -104,7 +99,6 @@ final class SpacesBarOverlay {
         }
         isShowing = true
         everWorked = true
-        onPlaced?()
     }
 
     /// 더 이상 쓸 수 없으니 예전 배지 방식으로 돌아간다
@@ -113,7 +107,6 @@ final class SpacesBarOverlay {
         fellBack = true
         lastNote = "되돌림: \(reason)"
         hide()
-        onFellBack?()
     }
 
     func hide() {
@@ -136,14 +129,17 @@ final class SpacesBarOverlay {
     /// 버튼 설명은 이름을 바꾸기 전 기본 이름("데스크탑 3")이거나 전체 화면 앱 이름이다.
     /// 끝의 숫자를 데스크탑 번호로 보고 맞춘다. 숫자가 없으면 전체 화면 공간이라 건너뛴다.
     private func matchNames(to buttons: [SpacesBarAX.SpaceButton]) -> [Placement] {
-        var result: [Placement] = []
-        for button in buttons {
-            guard let number = button.number,
-                  let space = spaces.spaces.first(where: { $0.number == number && !$0.isFullscreen }),
-                  let name = names.customName(for: space) else { continue }
-            result.append(Placement(frame: button.frame, name: name))
-        }
-        return result
+        // 지금 보고 있는 데스크탑 하나만 맡는다.
+        //
+        // 다른 데스크탑은 안쪽에 둔 배지가 macOS에 의해 통째로 축소되어 썸네일에 담기므로
+        // 위치와 크기가 저절로 맞는다. 그 위에 덧그리면 같은 이름이 두 번 보이고,
+        // 접근성이 알려주는 자리가 실제 썸네일과 조금씩 달라 오히려 어긋난다.
+        // 현재 데스크탑만은 미션 컨트롤이 열리기 직전에 찍은 사진이라 배지가 안 담긴다.
+        guard verticalStep >= 0,
+              let active = spaces.activeSpace, let number = active.number,
+              let name = names.customName(for: active),
+              let button = buttons.first(where: { $0.number == number }) else { return [] }
+        return [Placement(frame: button.frame, name: name)]
     }
 
     // MARK: - 창

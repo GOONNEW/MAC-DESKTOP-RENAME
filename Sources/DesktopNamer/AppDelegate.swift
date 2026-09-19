@@ -28,21 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         renameWindow = RenameWindowController(spaces: spaceManager, names: nameStore)
         badges = BadgeManager(spaces: spaceManager, names: nameStore)
         barOverlay = SpacesBarOverlay(spaces: spaceManager, names: nameStore)
-        // 공간 막대 위에 이름을 올릴 수 있으면, 데스크탑 안쪽에 두던 예전 배지는 끈다.
-        // 둘 다 켜져 있으면 미션 컨트롤에 같은 이름이 두 번 보인다.
-        barOverlay?.onPlaced = { [weak self] in
-            guard let self else { return }
-            self.badges?.suppressed = true
-            if !self.settings.spacesBarOverlayWorks { self.settings.spacesBarOverlayWorks = true }
-        }
-        barOverlay?.onFellBack = { [weak self] in
-            guard let self else { return }
-            self.badges?.suppressed = false
-            self.settings.spacesBarOverlayWorks = false
-        }
-        // 지난번에 덧그리기가 동작했다면 이번에도 배지는 만들지 않는다.
-        // 배지를 준비하려면 데스크탑을 한 바퀴 돌아야 해서 화면이 어지럽게 바뀐다.
-        badges?.suppressed = settings.spacesBarOverlayWorks
+        // 이름표는 데스크탑 안쪽에 두는 배지가 주력이다.
+        // macOS가 그 데스크탑을 통째로 축소해 썸네일을 그리므로 위치와 크기가 저절로 맞는다.
+        // 덧그리기는 배지로 안 되는 딱 한 곳, "지금 보고 있는 데스크탑"만 맡는다.
+        // (그 썸네일만은 미션 컨트롤이 열리기 직전에 찍은 사진이라 배지가 안 담긴다)
         // "지금 이름이 보이는 중인가"는 둘 중 하나라도 보이면 참이다.
         // 배지만 보면, 배지를 끈 뒤에는 늘 거짓이 되어 닫힘 판단과 위치 갱신이 통째로 멈춘다.
         signals.isShowing = { [weak self] in
@@ -98,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] uuids in self?.nameStore.prune(keeping: uuids) }
             .store(in: &cancellables)
 
-        badges?.autoPrepare = settings.badgeAutoPrepare && !settings.spacesBarOverlayWorks
+        badges?.autoPrepare = settings.badgeAutoPrepare
         settings.$badgeAutoPrepare
             .sink { [weak self] auto in self?.badges?.autoPrepare = auto }
             .store(in: &cancellables)
@@ -121,6 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.barOverlay?.update()
             }
             .store(in: &cancellables)
+
+
 
         settings.$badgeSize
             .sink { [weak self] size in
