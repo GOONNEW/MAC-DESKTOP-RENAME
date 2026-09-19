@@ -20,6 +20,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let updateNote: () -> String
 
     private let statusItem: NSStatusItem
+    private var isMenuOpen = false
     private let menu = NSMenu()
     private var cancellables = Set<AnyCancellable>()
 
@@ -222,13 +223,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(login)
 
         // 새 버전이 있을 때만 보여준다. 눈에 띄도록 직접 그린다.
-        if updateAvailable() {
-            let text = "최신 버전으로 업데이트하세요"
-            let updateItem = NSMenuItem(title: text, action: #selector(update(_:)), keyEquivalent: "")
-            updateItem.target = self
-            updateItem.view = ShinyMenuItemView(title: text)
-            menu.addItem(updateItem)
-        }
+        if updateAvailable() { menu.addItem(makeUpdateItem()) }
 
         let advanced = NSMenuItem(title: "고급", action: nil, keyEquivalent: "")
         let advancedMenu = NSMenu()
@@ -263,6 +258,38 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let quit = NSMenuItem(title: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         menu.addItem(quit)
+    }
+
+    /// 새 버전 안내 항목
+    private func makeUpdateItem() -> NSMenuItem {
+        let text = "최신 버전으로 업데이트하세요"
+        let item = NSMenuItem(title: text, action: #selector(update(_:)), keyEquivalent: "")
+        item.target = self
+        item.view = ShinyMenuItemView(title: text)
+        item.identifier = Self.updateItemID
+        return item
+    }
+
+    private static let updateItemID = NSUserInterfaceItemIdentifier("updateAvailable")
+
+    func menuWillOpen(_ menu: NSMenu) { isMenuOpen = true }
+    func menuDidClose(_ menu: NSMenu) { isMenuOpen = false }
+
+    /// 확인 결과가 도착했을 때 호출된다.
+    ///
+    /// 새 버전 확인은 네트워크 요청이라 시간이 걸린다. 메뉴를 열면서 확인을 시작하면
+    /// 결과는 메뉴가 다 그려진 뒤에 온다. 그래서 한 번 열어서는 항목이 보이지 않고
+    /// 두 번째에야 보였다. 열려 있는 메뉴에 그 자리에서 끼워 넣어 해결한다.
+    func updateAvailabilityChanged() {
+        guard isMenuOpen else { return }
+        let existing = menu.items.firstIndex { $0.identifier == Self.updateItemID }
+        if updateAvailable(), existing == nil {
+            // "로그인 시 자동 실행" 바로 아래가 제자리다
+            let after = menu.items.firstIndex { $0.action == #selector(toggleLaunchAtLogin(_:)) }
+            menu.insertItem(makeUpdateItem(), at: (after.map { $0 + 1 }) ?? menu.numberOfItems)
+        } else if !updateAvailable(), let existing {
+            menu.removeItem(at: existing)
+        }
     }
 
     // MARK: - Actions

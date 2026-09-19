@@ -69,13 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             updateNote: { [weak self] in self?.updateChecker.note ?? "확인 전" }
         )
 
-        // 새 버전이 나오면 메뉴에 표시한다. 켠 직후와 10분마다 확인한다.
+        updateChecker.onChange = { [weak self] in self?.statusBar?.updateAvailabilityChanged() }
+
+        // 새 버전이 나오면 메뉴에 표시한다. 켠 직후와 2분마다 확인한다.
         // 확인은 비동기라서, 메뉴를 열 때 확인을 시작하면 결과가 그 메뉴에는 못 담긴다.
         // 그래서 평소에 미리 확인해 두어야 메뉴를 처음 열 때 바로 보인다.
+        // 그래도 늦게 도착하면 onChange가 열려 있는 메뉴에 바로 끼워 넣는다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             self?.updateChecker.check()
         }
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 10 * 60, repeats: true) { [weak self] _ in
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 2 * 60, repeats: true) { [weak self] _ in
             self?.updateChecker.check()
         }
 

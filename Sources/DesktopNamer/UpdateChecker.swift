@@ -18,6 +18,10 @@ final class UpdateChecker {
     private(set) var lastCheckedAt: Date?
     private(set) var latestCommitTitle: String?
 
+    /// 확인 결과가 바뀌면 호출된다. 메뉴가 열려 있는 동안 결과가 도착할 수 있어,
+    /// 그때 메뉴에 항목을 바로 끼워 넣기 위함이다. 메인 스레드.
+    var onChange: (() -> Void)?
+
     private var checking = false
     /// 메뉴를 열 때 다시 묻기까지의 최소 간격.
     ///
@@ -106,11 +110,13 @@ final class UpdateChecker {
     private func finish(available: Bool, note: String, title: String? = nil,
                         completion: ((Bool) -> Void)?) {
         DispatchQueue.main.async {
+            let changed = self.updateAvailable != available
             self.checking = false
             self.updateAvailable = available
             self.note = note
             self.lastCheckedAt = Date()
             if let title { self.latestCommitTitle = title }
+            if changed { self.onChange?() }
             completion?(available)
         }
     }
