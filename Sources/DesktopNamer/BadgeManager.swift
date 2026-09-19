@@ -161,10 +161,10 @@ final class BadgeManager {
     func show(reason: String) {
         guard running, !isVisible else { return }
         preArmedUUID = nil
+        if let uuid = spaces.activeSpace?.uuid { joinMissionControl(uuid) }
         hideTimer?.invalidate()
         // 지연 없이 즉시 띄운다. macOS는 Mission Control을 열 때 현재 데스크탑 화면을
         // 한 번 찍어 썸네일로 쓰는데, 그 순간보다 배지가 늦으면 썸네일에 찍히지 않는다.
-        if let uuid = spaces.activeSpace?.uuid { lowerToNormalLevel(uuid) }
         setVisible(true)
         shownAt = Date()
         log("표시 (\(reason))")
@@ -206,7 +206,7 @@ final class BadgeManager {
         guard running, !isVisible, preArmedUUID == nil else { return }
         guard let uuid = spaces.activeSpace?.uuid, hasName(uuid) else { return }
         preArmedUUID = uuid
-        lowerToNormalLevel(uuid)
+        joinMissionControl(uuid)
         applyAlpha(1, to: uuid)
         DispatchQueue.main.asyncAfter(deadline: .now() + preArmTimeout) { [weak self] in
             guard let self, let armed = self.preArmedUUID else { return }
@@ -214,35 +214,35 @@ final class BadgeManager {
             // 그 사이에 제대로 열렸으면 그대로 두고, 아니면 도로 감춘다
             guard !self.isVisible else { return }
             self.applyAlpha(0, to: armed)
-            self.restoreFloatingLevel(armed)
+            self.leaveMissionControl(armed)
         }
     }
 
-    /// 지금 보고 있는 데스크탑의 이름표만 일반 창 높이로 내린다.
+    /// 지금 보고 있는 데스크탑의 이름표가 미션 컨트롤 애니메이션에 끼도록 성질을 바꾼다.
     ///
-    /// 이름표 창은 평소 "떠 있는 창"(floating) 높이에 둔다. 다른 데스크탑에서는 그 데스크탑
-    /// 화면에 같이 그려져 썸네일에 잘 담긴다. 그런데 지금 보고 있는 데스크탑에서는 다르다.
-    /// Mission Control이 열리면 그 데스크탑의 창들이 위로 날아올라 썸네일이 되는데,
-    /// 떠 있는 창은 그 무리에 끼지 않고 화면에 그대로 남는다. 실제로 이름표가 줄어들지 않고
-    /// 큰 글씨로 화면에 남아 있었다. 그래서 그 칸만 이름이 비어 보인다.
-    /// 일반 창 높이로 내리면 다른 창들과 함께 날아올라 썸네일에 담긴다.
-    private func lowerToNormalLevel(_ uuid: String) {
+    /// 다른 데스크탑은 화면이 통째로 축소돼 썸네일이 되므로 아무 설정도 필요 없다.
+    /// 지금 보고 있는 데스크탑만은 창들이 하나씩 위로 날아올라 썸네일을 이룬다.
+    /// 그 무리에 끼려면 평범한 창이어야 한다. 세 가지가 모두 막고 있었다.
+    ///   .stationary      — "미션 컨트롤의 영향을 받지 않는다" (창 만들 때부터 뺐다)
+    ///   isFloatingPanel  — 떠 있는 패널은 화면에 남는다
+    ///   level = .floating — 떠 있는 높이의 창도 화면에 남는다
+    /// 미션 컨트롤이 닫히면 원래대로 되돌린다. 평소에는 다른 창 위에 있어야
+    /// 다른 데스크탑 썸네일에서 창에 가리지 않는다.
+    private func joinMissionControl(_ uuid: String) {
         badges[uuid]?.forEach { panel in
+            panel.isFloatingPanel = false
             panel.level = .normal
             panel.orderFrontRegardless()
         }
     }
 
-    private func restoreFloatingLevel(_ uuid: String) {
+    private func leaveMissionControl(_ uuid: String) {
         badges[uuid]?.forEach { panel in
+            panel.isFloatingPanel = true
             panel.level = .floating
             panel.orderFrontRegardless()
         }
     }
-
-    private var preArmedUUID: String?
-    /// 미리 띄운 이름표를 되돌리기까지의 시간
-    private let preArmTimeout: TimeInterval = 0.45
 
     func hide(reason: String, force: Bool = false) {
         guard isVisible else { return }
@@ -250,7 +250,7 @@ final class BadgeManager {
         if !force, let shownAt, Date().timeIntervalSince(shownAt) < 0.35 { return }
         hideTimer?.invalidate()
         setVisible(false)
-        badges.keys.forEach(restoreFloatingLevel)
+        badges.keys.forEach(leaveMissionControl)
         shownAt = nil
         log("숨김 (\(reason))")
     }
@@ -448,7 +448,12 @@ final class BadgeManager {
         // 창 위에 떠야 썸네일에서 확실히 보인다. 평소엔 완전히 투명이라 방해하지 않는다.
         panel.level = .floating
         // 이 데스크탑에만 속하게 한다. moveToActiveSpace/canJoinAllSpaces가 없어야 따라다니지 않는다.
-        panel.collectionBehavior = [.stationary, .ignoresCycle]
+        //
+        // .stationary는 넣지 않는다. 애플 문서에 "이 창은 Exposé(미션 컨트롤)의 영향을 받지
+        // 않고 바탕화면처럼 그 자리에 남는다"고 되어 있다. 지금 보고 있는 데스크탑에서는
+        // 창들이 위로 날아올라 썸네일이 되는데, 이 설정이 붙어 있으면 이름표만 날아오르지
+        // 않고 화면에 큰 글씨로 남는다. 그 칸만 이름이 비어 보이던 원인이다.
+        panel.collectionBehavior = [.ignoresCycle]
         // 앱이 활성화될 때 창을 현재 데스크탑으로 끌어오지 않도록
         panel.isFloatingPanel = true
         panel.contentView = container
