@@ -15,8 +15,16 @@ final class SpacesBarOverlay {
 
     private var panels: [NSPanel] = []
     private var fields: [NSTextField] = []
-    /// 썸네일 안에서 이름표를 놓을 구석
-    var corner: BadgeManager.Corner = .bottomRight
+    /// 썸네일 안에서 이름표를 놓을 세로 단계 (0 = 맨 위 … 4 = 맨 아래)
+    var verticalStep: Int = 1
+
+    /// 각 단계가 버튼 위쪽에서 얼마나 내려온 자리인지
+    ///
+    /// 접근성이 주는 버튼 영역은 "썸네일 그림 + 아래 글자"가 한 덩어리다. 그림만의 자리를
+    /// 알려주는 값이 없어(자식 요소도 없고 AXFrame도 같은 값), 계산으로 맞히려다 여러 번
+    /// 어긋났다. 그래서 몇 단계로 나눠 두고 눈으로 고르게 한다.
+    static let stepTitles = ["맨 위", "위쪽", "가운데", "아래쪽", "맨 아래"]
+    private static let stepFractions: [CGFloat] = [0.12, 0.26, 0.40, 0.54, 0.68]
     /// 글자 크기
     var size: BadgeManager.Size = .large
 
@@ -201,6 +209,7 @@ final class SpacesBarOverlay {
     /// 늘 정확하지는 않아서(크기가 두 배로 오거나, 여는 도중의 중간값이 섞인다), 계산이
     /// 빗나가면 이름표가 공간 막대 바깥 화면 한가운데에 떠 버렸다.
     private func place(panel: NSPanel, field: NSTextField, text: String, over button: CGRect) {
+        // 글자 크기를 정할 때만 쓴다. 놓는 자리는 아래에서 단계로 정한다.
         let thumbnail = thumbnailRect(in: button)
         // 썸네일 높이에 맞춰 글자 크기를 정한다. 설정의 비율을 그대로 쓰면 썸네일에서는
         // 너무 커서, 비율만 가져와 줄이고 위아래로 묶는다.
@@ -232,16 +241,10 @@ final class SpacesBarOverlay {
         // 붙이면 이름표가 옆 썸네일 쪽으로 밀려난다. 실제로 이름이 한 칸씩 오른쪽으로 치우쳐
         // 보였고, 어긋난 정도가 끝까지 일정했다. 배율이 아니라 정렬 때문이라는 뜻이다.
         // 버튼 영역과 썸네일은 중심이 같으므로, 가운데에 놓으면 너비를 잘못 알아도 맞는다.
-        let margin: CGFloat = 3
         var x = button.midX - width / 2
-        var y: CGFloat
-        if corner.isCenter {
-            y = thumbnail.midY - height / 2
-        } else if corner.isTop {
-            y = thumbnail.maxY - height - margin
-        } else {
-            y = thumbnail.minY + margin
-        }
+        let step = min(max(verticalStep, 0), Self.stepFractions.count - 1)
+        let centerY = button.maxY - button.height * Self.stepFractions[step]
+        var y = centerY - height / 2
         // 마지막 안전장치: 버튼 영역을 벗어나지 않게 민다
         x = min(max(x, button.minX), button.maxX - width)
         y = min(max(y, button.minY), button.maxY - height)

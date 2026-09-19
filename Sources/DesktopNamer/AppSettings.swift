@@ -10,6 +10,7 @@ final class AppSettings: ObservableObject {
     private static let badgeMirrorKey = "badgeMirrorToOtherScreens"
     private static let badgeAutoPrepareKey = "badgeAutoPrepare"
     private static let overlayWorksKey = "spacesBarOverlayWorks"
+    private static let overlayStepKey = "spacesBarOverlayStep"
 
     /// 데스크탑마다 이름 배지 창을 두고 Mission Control이 열릴 때만 보이게 한다 (기본 방식)
     @Published var badgeEnabled: Bool {
@@ -48,6 +49,15 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(spacesBarOverlayWorks, forKey: Self.overlayWorksKey) }
     }
 
+    /// 미션 컨트롤 썸네일 안에서 이름표를 놓을 세로 단계 (0 = 맨 위 … 4 = 맨 아래)
+    ///
+    /// 접근성은 썸네일 그림만의 자리를 알려주지 않는다. 그림과 아래 글자가 한 덩어리로 오는데,
+    /// 그 비율은 macOS 버전마다 다르다. 계산으로 맞히려다 여러 번 어긋났으므로,
+    /// 눈으로 보고 고를 수 있게 한다.
+    @Published var spacesBarOverlayStep: Int {
+        didSet { UserDefaults.standard.set(spacesBarOverlayStep, forKey: Self.overlayStepKey) }
+    }
+
     private var isReverting = false
 
     @Published var launchAtLogin: Bool {
@@ -78,6 +88,7 @@ final class AppSettings: ObservableObject {
         badgeMirrorToOtherScreens = UserDefaults.standard.bool(forKey: Self.badgeMirrorKey)
         badgeAutoPrepare = UserDefaults.standard.object(forKey: Self.badgeAutoPrepareKey) as? Bool ?? true
         spacesBarOverlayWorks = UserDefaults.standard.bool(forKey: Self.overlayWorksKey)
+        spacesBarOverlayStep = UserDefaults.standard.object(forKey: Self.overlayStepKey) as? Int ?? 1
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }

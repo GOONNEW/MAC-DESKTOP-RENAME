@@ -147,17 +147,25 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let cornerItem = NSMenuItem(title: "위치", action: nil, keyEquivalent: "")
         let cornerMenu = NSMenu()
         cornerMenu.autoenablesItems = false
-        // 미션 컨트롤 위에 직접 그릴 때는 이름표를 썸네일 가운데에 맞추므로 좌우 선택이 없다.
-        // (버튼 영역이 실제 썸네일보다 넓어, 한쪽에 붙이면 옆 썸네일로 밀려난다)
-        let corners: [(BadgeManager.Corner, String)] = settings.spacesBarOverlayWorks
-            ? [(.topRight, "위"), (.center, "가운데"), (.bottomRight, "아래")]
-            : BadgeManager.Corner.allCases.map { ($0, $0.title) }
-        for (value, title) in corners {
-            let item = NSMenuItem(title: title, action: #selector(setCorner(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = value.rawValue
-            item.state = settings.badgeCorner == value ? .on : .off
-            cornerMenu.addItem(item)
+        // 미션 컨트롤 위에 직접 그릴 때는 가로를 썸네일 가운데로 고정하고, 세로만 고른다.
+        // (버튼 영역이 실제 썸네일보다 넓어 한쪽에 붙이면 옆 썸네일로 밀려나고,
+        //  접근성이 썸네일 그림만의 자리를 알려주지 않아 세로는 눈으로 맞추는 편이 확실하다)
+        if settings.spacesBarOverlayWorks {
+            for (index, title) in SpacesBarOverlay.stepTitles.enumerated() {
+                let item = NSMenuItem(title: title, action: #selector(setOverlayStep(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = index
+                item.state = settings.spacesBarOverlayStep == index ? .on : .off
+                cornerMenu.addItem(item)
+            }
+        } else {
+            for value in BadgeManager.Corner.allCases {
+                let item = NSMenuItem(title: value.title, action: #selector(setCorner(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = value.rawValue
+                item.state = settings.badgeCorner == value ? .on : .off
+                cornerMenu.addItem(item)
+            }
         }
         cornerItem.submenu = cornerMenu
         displayMenu.addItem(cornerItem)
@@ -308,6 +316,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         guard let raw = sender.representedObject as? String,
               let corner = BadgeManager.Corner(rawValue: raw) else { return }
         settings.badgeCorner = corner
+    }
+
+    @objc private func setOverlayStep(_ sender: NSMenuItem) {
+        guard let step = sender.representedObject as? Int else { return }
+        settings.spacesBarOverlayStep = step
     }
 
     @objc private func setBadgeSize(_ sender: NSMenuItem) {

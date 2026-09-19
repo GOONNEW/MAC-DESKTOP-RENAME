@@ -112,9 +112,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         settings.$badgeCorner
-            .sink { [weak self] corner in
-                self?.badges?.corner = corner
-                self?.barOverlay?.corner = corner
+            .sink { [weak self] corner in self?.badges?.corner = corner }
+            .store(in: &cancellables)
+
+        settings.$spacesBarOverlayStep
+            .sink { [weak self] step in
+                self?.barOverlay?.verticalStep = step
+                self?.barOverlay?.update()
             }
             .store(in: &cancellables)
 
