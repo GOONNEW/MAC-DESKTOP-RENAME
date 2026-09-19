@@ -157,6 +157,11 @@ final class BadgeManager {
 
     // MARK: - 보이기/숨기기
 
+    /// 제스처 낌새에 미리 띄워 둔 데스크탑 (preArm 참고)
+    private var preArmedUUID: String?
+    /// 미리 띄운 이름표를 되돌리기까지의 시간
+    private let preArmTimeout: TimeInterval = 0.45
+
     /// Mission Control이 열릴 것 같을 때: 잠깐 뒤(애니메이션이 시작될 즈음) 배지를 보이게 한다.
     func show(reason: String) {
         guard running, !isVisible else { return }
