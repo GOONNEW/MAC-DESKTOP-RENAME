@@ -181,10 +181,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         displayMenu.addItem(.separator())
 
-        // 지금 보고 있는 데스크탑의 썸네일만은 미션 컨트롤이 열리기 직전에 찍은 사진이라
-        // 안쪽에 둔 이름표가 담기지 않는다. 그 한 칸만 위에 덧그린다.
-        // 자리가 맘에 안 들면 단계를 바꾸거나 끌 수 있다.
-        let currentItem = NSMenuItem(title: "현재 데스크탑 이름 덧그리기", action: nil, keyEquivalent: "")
+        // 현재 데스크탑 썸네일에 이름이 자주 빠지는 사람을 위한 보조 수단. 기본은 끔이다.
+        // 켜면 이름표가 하나 더 따라 나오므로, 필요한 사람만 쓴다.
+        let currentItem = NSMenuItem(title: "현재 데스크탑 이름 덧그리기 (보조)", action: nil, keyEquivalent: "")
         let currentMenu = NSMenu()
         currentMenu.autoenablesItems = false
         let offItem = NSMenuItem(title: "끔", action: #selector(setOverlayStep(_:)), keyEquivalent: "")

@@ -9,7 +9,9 @@ final class AppSettings: ObservableObject {
     private static let badgeMainOnlyKey = "badgeMainScreenOnly"
     private static let badgeMirrorKey = "badgeMirrorToOtherScreens"
     private static let badgeAutoPrepareKey = "badgeAutoPrepare"
-    private static let overlayStepKey = "spacesBarOverlayStep"
+    // 키 이름을 바꿔 예전에 저장된 값을 버린다. 기본값이 "켬"이던 시절의 설정이 남아 있으면
+    // 업데이트해도 이름표가 하나 더 따라 나온다.
+    private static let overlayStepKey = "spacesBarOverlayStep2"
 
     /// 데스크탑마다 이름 배지 창을 두고 Mission Control이 열릴 때만 보이게 한다 (기본 방식)
     @Published var badgeEnabled: Bool {
@@ -39,11 +41,13 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(badgeAutoPrepare, forKey: Self.badgeAutoPrepareKey) }
     }
 
-    /// 미션 컨트롤 썸네일 안에서 이름표를 놓을 세로 단계 (0 = 맨 위 … 4 = 맨 아래)
+    /// 현재 데스크탑 이름을 미션 컨트롤 위에 덧그릴지와 그 세로 단계
+    /// (-1 = 끔, 0 = 맨 위 … 4 = 맨 아래)
     ///
-    /// 접근성은 썸네일 그림만의 자리를 알려주지 않는다. 그림과 아래 글자가 한 덩어리로 오는데,
-    /// 그 비율은 macOS 버전마다 다르다. 계산으로 맞히려다 여러 번 어긋났으므로,
-    /// 눈으로 보고 고를 수 있게 한다.
+    /// 기본은 끔이다. 데스크탑 안쪽에 둔 이름표가 현재 데스크탑 썸네일에도 대체로 잘 담기고,
+    /// 덧그리면 이름표가 하나 더 따라 나온다. 접근성이 알려주는 버튼 영역이 눈에 보이는
+    /// 공간 막대보다 아래로 넓어서, 그 안에 놓아도 막대 밖에 뜬다.
+    /// 현재 데스크탑 이름이 자주 빠지는 사람만 켜면 된다.
     @Published var spacesBarOverlayStep: Int {
         didSet { UserDefaults.standard.set(spacesBarOverlayStep, forKey: Self.overlayStepKey) }
     }
@@ -77,7 +81,7 @@ final class AppSettings: ObservableObject {
         badgeMainScreenOnly = UserDefaults.standard.object(forKey: Self.badgeMainOnlyKey) as? Bool ?? true
         badgeMirrorToOtherScreens = UserDefaults.standard.bool(forKey: Self.badgeMirrorKey)
         badgeAutoPrepare = UserDefaults.standard.object(forKey: Self.badgeAutoPrepareKey) as? Bool ?? true
-        spacesBarOverlayStep = UserDefaults.standard.object(forKey: Self.overlayStepKey) as? Int ?? 1
+        spacesBarOverlayStep = UserDefaults.standard.object(forKey: Self.overlayStepKey) as? Int ?? -1
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 }
