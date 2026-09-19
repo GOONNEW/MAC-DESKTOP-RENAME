@@ -241,22 +241,33 @@ final class BadgeManager {
         }
     }
 
-    /// 안전망: 표시 직후 한 번 더 모든 배지의 알파를 확인해 바로잡는다.
+    /// 안전망: 표시 직후 여러 번 모든 배지의 알파를 확인해 바로잡는다.
     ///
-    /// 창 서버가 배경 데스크탑의 창을 늦게 갱신하는 일이 있어, 한 번 더 값을 못 박아 둔다.
+    /// 창 서버가 배경 데스크탑의 창을 늦게 갱신하는 일이 있고, 띄우기 직전에 숨김이
+    /// 겹치면 일부 배지가 투명한 채로 남는다. 실제로 데스크탑 하나만 이름이 빠지는 일이 있었다.
+    /// 썸네일이 그려지기 전에 잡을 수 있도록 이른 시점부터 여러 번 확인한다.
     private func scheduleReassert() {
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.isVisible else { return }
-            for uuid in self.badges.keys {
-                let want: CGFloat = self.hasName(uuid) ? 1 : 0
-                if self.alphas[uuid] != want || self.badges[uuid]?.first?.alphaValue != want {
-                    self.applyAlpha(want, to: uuid)
-                    self.log("알파 보정: \(self.spaces.spaces.first(where: { $0.uuid == uuid })?.defaultName ?? uuid) → \(want)")
-                }
+        for delay in [0.15, 0.4] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.reassertNow()
             }
         }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.reassertNow()
+        }
         reassertWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
+    }
+
+    private func reassertNow() {
+        for uuid in badges.keys {
+            let want: CGFloat = hasName(uuid) ? 1 : 0
+            guard alphas[uuid] != want || badges[uuid]?.first?.alphaValue != want else { continue }
+            applyAlpha(want, to: uuid)
+            log("알파 보정: \(spaces.spaces.first(where: { $0.uuid == uuid })?.defaultName ?? uuid) → \(want)")
+        }
     }
 
     private var reassertWork: DispatchWorkItem?

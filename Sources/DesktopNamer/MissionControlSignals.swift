@@ -36,6 +36,8 @@ final class MissionControlSignals {
     private var lastClosedAt = Date.distantPast
     private var lastAutoOpenAt = Date.distantPast
     private var ticks = 0
+    /// 화면 지표가 연속으로 "열렸다"고 본 횟수
+    private var metricOpens = 0
     /// 이 시각까지는 다시 열지 않는다 (닫은 직후의 잔여 신호로 되살아나지 않게)
     private var reopenBlockedUntil = Date.distantPast
     /// 열려 있다는 판단 때문에 약한 닫힘 신호를 무시한 횟수
@@ -177,9 +179,25 @@ final class MissionControlSignals {
             }
             // 제스처를 놓쳤어도 열린 것을 알아챈다
             // (Mission Control 키, 핫코너, Dock 아이콘으로 연 경우)
-            let confirmed = SpacesBarAX.isOpen() == true || probe.looksActiveStrict() == true
+            //
+            // 접근성 트리가 답하면 그것만 믿는다. 예전에는 "트리가 열림" 또는 "지표가 열림"
+            // 중 하나만 맞으면 열었는데, 트리가 "닫힘"이라고 해도 지표가 오판하면 열려 버렸다.
+            // 실제로 2초마다 혼자 떴다 사라지기를 반복했다. 지표는 창 개수 같은 값이라
+            // 평소 작업 중에도 흔들린다. 확실한 근거가 있으면 흔들리는 쪽은 보지 않는다.
+            let confirmed: Bool
+            switch SpacesBarAX.isOpen() {
+            case .some(let openByTree):
+                confirmed = openByTree
+                metricOpens = 0
+            case .none:
+                // 트리를 못 읽을 때만 지표를 쓴다. 한 번의 흔들림으로 열지 않도록
+                // 연속 두 번 같은 답이 나와야 인정한다.
+                metricOpens = probe.looksActiveStrict() == true ? metricOpens + 1 : 0
+                confirmed = metricOpens >= 2
+            }
             if confirmed, Date().timeIntervalSince(lastAutoOpenAt) > 2 {
                 lastAutoOpenAt = Date()
+                metricOpens = 0
                 open("Mission Control 열림 확인", automatic: true)
             }
             return
