@@ -8,7 +8,7 @@ import Combine
 /// 창은 그 데스크탑이 활성일 때 만들어야 그 데스크탑에 속하므로, 데스크탑을 방문할 때마다 없는 배지를 만든다.
 final class BadgeManager {
     enum Corner: String, CaseIterable {
-        case bottomRight, bottomLeft, topRight, topLeft
+        case bottomRight, bottomLeft, topRight, topLeft, center
 
         var title: String {
             switch self {
@@ -16,8 +16,12 @@ final class BadgeManager {
             case .bottomLeft: return "왼쪽 아래"
             case .topRight: return "오른쪽 위"
             case .topLeft: return "왼쪽 위"
+            case .center: return "가운데"
             }
         }
+
+        var isTop: Bool { self == .topRight || self == .topLeft }
+        var isCenter: Bool { self == .center }
     }
 
     private let spaces: SpaceManager
@@ -468,6 +472,8 @@ final class BadgeManager {
             origin = CGPoint(x: full.maxX - margin.width - width, y: visible.maxY - margin.width - height)
         case .topLeft:
             origin = CGPoint(x: full.minX + margin.width, y: visible.maxY - margin.width - height)
+        case .center:
+            origin = CGPoint(x: full.midX - width / 2, y: full.midY - height / 2)
         }
         panel.setFrame(CGRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
     }

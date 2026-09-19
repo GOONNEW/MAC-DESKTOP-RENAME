@@ -276,8 +276,9 @@ enum SpacesBarAX {
                 dump(group, depth: 1, maxDepth: 5, limit: 70, into: &lines)
             }
             lastTreeDump = lines
-        } else if lines.count < lastTreeDump.count {
-            // 트리 부분은 처음 찍어 둔 것을 이어 붙인다
+        } else if !lastTreeDump.isEmpty {
+            // 트리는 비싸서 처음 한 번만 찍는다. 그때의 좌표라는 점을 밝혀 둔다.
+            lines.append("아래는 처음 열었을 때 찍어 둔 기록입니다 (좌표는 그때 값):")
             lines.append(contentsOf: lastTreeDump.drop { !$0.hasPrefix("버튼 속성") && $0 != "트리:" })
         }
         lastOpenSnapshot = lines.prefix(70).joined(separator: "\n")

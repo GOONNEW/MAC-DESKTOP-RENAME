@@ -186,11 +186,11 @@ final class SpacesBarOverlay {
         let screen = NSScreen.screens.first(where: { $0.frame.intersects(button) })
             ?? NSScreen.screens.first
         let ratio = screen.map { $0.frame.height / $0.frame.width } ?? 0.625
-        // 버튼 너비에는 좌우 여백이 들어 있어, 그대로 비율을 곱하면 그림 높이가 과하게 나온다.
-        // 실측: 버튼 169×129에서 계산값은 109였지만 실제 그림은 약 81이었고, 이름표가
-        // 그림 아래 글자 자리로 내려갔다. 버튼 높이의 65%를 넘지 않게 묶는다.
-        // (129의 65% = 84로 실제와 맞는다. 아래 남는 부분이 "데스크탑 N" 글자 자리다)
-        let estimated = min(button.width * ratio, button.height * 0.65)
+        // 버튼 영역은 "썸네일 그림 + 아래 데스크탑 이름 글자"로 이루어진다.
+        // 그림은 화면을 그대로 축소한 것이므로 너비에 화면 비율을 곱하면 높이가 나온다.
+        // 실측으로 확인: 버튼 169×129, 버튼 간격 171(좌우 여백 2pt뿐)이고
+        // 169 ÷ 1.547 = 109, 129 - 109 = 20 → 남는 20이 글자 자리로 정확히 맞는다.
+        let estimated = button.width * ratio
         let height = min(max(estimated, button.height * 0.4), button.height)
         return CGRect(x: button.minX, y: button.maxY - height, width: button.width, height: height)
     }
@@ -235,9 +235,12 @@ final class SpacesBarOverlay {
         let margin: CGFloat = 3
         var x = button.midX - width / 2
         var y: CGFloat
-        switch corner {
-        case .bottomRight, .bottomLeft: y = thumbnail.minY + margin
-        case .topRight, .topLeft:       y = thumbnail.maxY - height - margin
+        if corner.isCenter {
+            y = thumbnail.midY - height / 2
+        } else if corner.isTop {
+            y = thumbnail.maxY - height - margin
+        } else {
+            y = thumbnail.minY + margin
         }
         // 마지막 안전장치: 버튼 영역을 벗어나지 않게 민다
         x = min(max(x, button.minX), button.maxX - width)

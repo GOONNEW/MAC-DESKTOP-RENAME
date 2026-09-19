@@ -150,7 +150,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         // 미션 컨트롤 위에 직접 그릴 때는 이름표를 썸네일 가운데에 맞추므로 좌우 선택이 없다.
         // (버튼 영역이 실제 썸네일보다 넓어, 한쪽에 붙이면 옆 썸네일로 밀려난다)
         let corners: [(BadgeManager.Corner, String)] = settings.spacesBarOverlayWorks
-            ? [(.bottomRight, "아래"), (.topRight, "위")]
+            ? [(.topRight, "위"), (.center, "가운데"), (.bottomRight, "아래")]
             : BadgeManager.Corner.allCases.map { ($0, $0.title) }
         for (value, title) in corners {
             let item = NSMenuItem(title: title, action: #selector(setCorner(_:)), keyEquivalent: "")
