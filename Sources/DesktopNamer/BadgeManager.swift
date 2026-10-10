@@ -264,8 +264,8 @@ final class BadgeManager {
             panel.isFloatingPanel = false
             panel.collectionBehavior = Self.flyingBehavior
             panel.level = .normal
-            panel.orderFrontRegardless()
         }
+        bringToFrontIfCurrent(uuid)
     }
 
     private func leaveMissionControl(_ uuid: String) {
@@ -273,8 +273,19 @@ final class BadgeManager {
             panel.isFloatingPanel = true
             panel.collectionBehavior = Self.restingBehavior
             panel.level = .floating
-            panel.orderFrontRegardless()
         }
+        bringToFrontIfCurrent(uuid)
+    }
+
+    /// 창을 앞으로 끌어내는 건 지금 보고 있는 데스크탑에서만 한다.
+    ///
+    /// 다른 데스크탑에 속한 창에 orderFrontRegardless()를 걸면 macOS가 그 창을
+    /// 지금 보고 있는 데스크탑으로 옮겨 버린다. 그래서 이름 동기화를 하거나
+    /// Mission Control을 닫을 때마다 다른 데스크탑 이름표들이 한 화면에 끌려와
+    /// 겹쳐 보였다. 성질(높이·collectionBehavior)만 바꾸는 건 어느 데스크탑이든 안전하다.
+    private func bringToFrontIfCurrent(_ uuid: String) {
+        guard uuid == spaces.activeSpace?.uuid else { return }
+        badges[uuid]?.forEach { $0.orderFrontRegardless() }
     }
 
     func hide(reason: String, force: Bool = false) {
