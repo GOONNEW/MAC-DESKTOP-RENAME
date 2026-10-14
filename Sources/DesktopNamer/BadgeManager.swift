@@ -109,6 +109,7 @@ final class BadgeManager {
             .sink { [weak self] space in
                 self?.ensureBadge(for: space)
                 self?.armActive()
+                self?.verifyPlacement(of: space)
             }
             .store(in: &cancellables)
 
@@ -156,6 +157,7 @@ final class BadgeManager {
         flyingUUID = nil
         missingRecheck?.cancel()
         missingOnce.removeAll()
+        placementRetries.removeAll()
         reassertWork?.cancel()
         removeMirrors()
         isVisible = false
@@ -462,7 +464,43 @@ final class BadgeManager {
         layout(uuid: space.uuid)
         applyAlpha(isVisible && hasName(space.uuid) ? 1 : 0, to: space.uuid)
         log("배지 생성: \(space.defaultName) (화면 \(panels.count)개)")
+        verifyPlacement(of: space)
     }
+
+    /// 이름표가 정말 그 데스크탑에 놓였는지 확인하고, 틀렸으면 다시 만든다.
+    ///
+    /// 데스크탑을 옮기는 애니메이션이 끝나기 전에 창을 만들면 macOS는 그 창을
+    /// 아직 "떠나온" 데스크탑에 붙인다. 이름 동기화로 한 바퀴 도는 동안 이러면
+    /// 한 데스크탑에 이름표 두 개가 겹치고 다른 데스크탑은 비게 된다.
+    /// (똑소리와 블로그처럼 바로 옆 번호끼리 겹친 것이 이 때문이었다.)
+    private func verifyPlacement(of space: Space) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            guard let self, self.running,
+                  let panels = self.badges[space.uuid],
+                  // 이미 다른 데스크탑으로 넘어갔으면 판단할 수 없다. 다음에 들를 때 다시 본다.
+                  let live = self.spaces.activeSpace, live.uuid == space.uuid else { return }
+            let misplaced = panels.contains { panel in
+                // 아직 화면에 올라가지 않은 창은 번호가 없다
+                guard panel.windowNumber > 0 else { return false }
+                let ids = SkyLight.spaceIDs(forWindow: CGWindowID(panel.windowNumber))
+                return !ids.isEmpty && !ids.contains(space.id)
+            }
+            guard misplaced else { self.placementRetries.removeValue(forKey: space.uuid); return }
+            let tries = self.placementRetries[space.uuid, default: 0]
+            guard tries < 2 else { return }
+            self.placementRetries[space.uuid] = tries + 1
+            self.log("배지 자리 틀림: \(space.defaultName) → 다시 만듦")
+            panels.forEach { $0.orderOut(nil) }
+            self.badges.removeValue(forKey: space.uuid)
+            self.fields.removeValue(forKey: space.uuid)
+            self.alphas.removeValue(forKey: space.uuid)
+            // 지금은 이 데스크탑에 확실히 머물러 있으므로 제자리에 만들어진다
+            self.ensureBadge(for: live)
+        }
+    }
+
+    /// 자리를 다시 잡아 본 횟수 (끝없이 반복하지 않도록)
+    private var placementRetries: [String: Int] = [:]
 
     private func makePanel(on screen: NSScreen, text: String) -> (NSPanel, NSTextField) {
         let field = NSTextField(labelWithString: text)
